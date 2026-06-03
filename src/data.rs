@@ -39,4 +39,3 @@ pub fn load_labels(path:&str)->Vec<usize>{
     }
     labels
 }
-pub fn 
