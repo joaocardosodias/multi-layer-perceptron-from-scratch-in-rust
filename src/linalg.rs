@@ -10,14 +10,14 @@ pub fn mul_matrix_vec(matrix: &[Vec<f64>], in_vector: &[f64]) -> Vec<f64> {
     }
     out_vector
 }
-pub fn add_vec_vec(vec1: Vec<f64>, vec2: Vec<f64>) -> Vec<f64> {
+pub fn add_vec_vec(vec1: &[f64], vec2: &[f64]) -> Vec<f64> {
     let mut out_vector = Vec::new();
     for i in 0..vec1.len() {
         out_vector.push(vec1[i] + vec2[i]);
     }
     out_vector
 }
-pub fn mul_vec_vec(vec1: Vec<f64>, vec2: Vec<f64>) -> Vec<f64> {
+pub fn mul_vec_vec(vec1: &[f64], vec2: &[f64]) -> Vec<f64> {
     let mut out_vector = Vec::new();
     for i in 0..vec1.len() {
         out_vector.push(vec1[i] * vec2[i]);
