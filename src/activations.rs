@@ -14,3 +14,6 @@ pub fn softmax(logits: &[f64]) -> Vec<f64> {
     let sum: f64 = exps.iter().sum();
     exps.iter().map(|&e| e / sum).collect()
 }
+pub fn relu_vec(v:&Vec<f64>)->Vec<f64>{
+  v.iter().map(|&x| relu(x)).collect()
+}

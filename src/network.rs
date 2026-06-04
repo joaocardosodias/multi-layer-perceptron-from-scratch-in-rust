@@ -1,5 +1,6 @@
-use crate::linalg::*;
+use crate::activations;
 use crate::activations::*;
+use crate::linalg::*;
 
 static mut SEED: u64 = 42;
 fn rand_uniform() -> f64 {
@@ -18,8 +19,6 @@ fn rand_normal() -> f64 {
     sum - 6.0
 }
 
-
-
 pub struct MLP {
     pub weights: Vec<Vec<Vec<f64>>>,
     pub biases: Vec<Vec<f64>>,
@@ -28,10 +27,13 @@ pub struct ForwardCache {
     pub pre_activations: Vec<Vec<f64>>,
     pub activations: Vec<Vec<f64>>,
 }
-impl ForwardCache{
-  pub fn new()->Self{
-    ForwardCache { pre_activations: Vec::new(), activations: Vec::new() }
-  }
+impl ForwardCache {
+    pub fn new() -> Self {
+        ForwardCache {
+            pre_activations: Vec::new(),
+            activations: Vec::new(),
+        }
+    }
 }
 impl MLP {
     pub fn new(architecture: &[usize]) -> Self {
@@ -57,8 +59,23 @@ impl MLP {
         }
         MLP { weights, biases }
     }
-    pub fn forward(&self,input:&[f64])->(Vec<f64>,ForwardCache){
-      let mut cache=ForwardCache::new();
-      
+    pub fn forward(&self, start_input: &[f64]) -> (Vec<f64>, ForwardCache) {
+        let mut cache = ForwardCache::new();
+
+        cache.activations.push(start_input.to_vec());
+        for i in 0..self.weights.len() {
+            let input = &cache.activations[i];
+            let z = add_vec_vec(&mul_matrix_vec(&self.weights[i], input), &self.biases[i]);
+            cache.pre_activations.push(z.clone());
+            let a = if i == self.weights.len() - 1 {
+                softmax(&z)
+            } else {
+                relu_vec(&z)
+            };
+            cache.activations.push(a);
+        }
+        (cache.activations.last().unwrap().clone(), cache)
     }
 }
+
+
