@@ -38,3 +38,26 @@ pub fn mul_matrix_matrix(matrix1: &[Vec<f64>], matrix2: &[Vec<f64>]) -> Vec<Vec<
     }
     c
 }
+pub fn outer_product(a: &[f64], b: &[f64]) -> Vec<Vec<f64>> {
+    let mut result = Vec::with_capacity(a.len());
+    for &val_a in a {
+        let mut row = Vec::with_capacity(b.len());
+        for &val_b in b {
+            row.push(val_a * val_b);
+        }
+        result.push(row);
+    }
+    result
+}
+
+pub fn transpose(m: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let rows = m.len();
+    let cols = m[0].len();
+    let mut t = vec![vec![0.0; rows]; cols];
+    for i in 0..rows {
+        for j in 0..cols {
+            t[j][i] = m[i][j];
+        }
+    }
+    t
+}
