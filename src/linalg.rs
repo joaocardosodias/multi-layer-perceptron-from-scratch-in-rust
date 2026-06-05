@@ -1,63 +1,56 @@
-pub fn mul_matrix_vec(matrix: &[Vec<f64>], in_vector: &[f64]) -> Vec<f64> {
-    let mut out_vector = Vec::new();
-    for i in 0..matrix.len() {
-        let mut sum = 0.0;
-        for j in 0..matrix[i].len() {
-            sum += matrix[i][j] * in_vector[j];
+use matrixmultiply::sgemm;
+
+#[inline]
+pub unsafe fn gemm(
+    m: usize, k: usize, n: usize,
+    alpha: f32,
+    a: *const f32, rsa: isize, csa: isize,
+    b: *const f32, rsb: isize, csb: isize,
+    beta: f32,
+    c: *mut f32, rsc: isize, csc: isize,
+) {
+    unsafe {
+        sgemm(m, k, n, alpha, a, rsa, csa, b, rsb, csb, beta, c, rsc, csc);
+    }
+}
+
+#[inline]
+pub fn mat_vec_mul(matrix: &[f32], rows: usize, cols: usize, vector: &[f32], out: &mut [f32]) {
+    unsafe {
+        for r in 0..rows {
+            let offset = r * cols;
+            let mut sum = 0.0;
+            for c in 0..cols {
+                sum += *matrix.get_unchecked(offset + c) * *vector.get_unchecked(c);
+            }
+            *out.get_unchecked_mut(r) = sum;
         }
-        out_vector.push(sum);
-        sum = 0.0;
     }
-    out_vector
 }
-pub fn add_vec_vec(vec1: &[f64], vec2: &[f64]) -> Vec<f64> {
-    let mut out_vector = Vec::new();
-    for i in 0..vec1.len() {
-        out_vector.push(vec1[i] + vec2[i]);
-    }
-    out_vector
-}
-pub fn mul_vec_vec(vec1: &[f64], vec2: &[f64]) -> Vec<f64> {
-    let mut out_vector = Vec::new();
-    for i in 0..vec1.len() {
-        out_vector.push(vec1[i] * vec2[i]);
-    }
-    out_vector
-}
-pub fn mul_matrix_matrix(matrix1: &[Vec<f64>], matrix2: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let m = matrix1.len();
-    let n = matrix2[0].len();
-    let k = matrix2.len();
-    let mut c = vec![vec![0.0; n]; m];
-    for i in 0..m {
-        for j in 0..n {
-            for p in 0..k {
-                c[i][j] +=matrix1[i][p] * matrix2[p][j];
+
+#[inline]
+pub fn add_outer_product(a: &[f32], b: &[f32], rows: usize, cols: usize, out: &mut [f32]) {
+    unsafe {
+        for r in 0..rows {
+            let offset = r * cols;
+            let val_a = *a.get_unchecked(r);
+            for c in 0..cols {
+                let val_b = *b.get_unchecked(c);
+                *out.get_unchecked_mut(offset + c) += val_a * val_b;
             }
         }
     }
-    c
-}
-pub fn outer_product(a: &[f64], b: &[f64]) -> Vec<Vec<f64>> {
-    let mut result = Vec::with_capacity(a.len());
-    for &val_a in a {
-        let mut row = Vec::with_capacity(b.len());
-        for &val_b in b {
-            row.push(val_a * val_b);
-        }
-        result.push(row);
-    }
-    result
 }
 
-pub fn transpose(m: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let rows = m.len();
-    let cols = m[0].len();
-    let mut t = vec![vec![0.0; rows]; cols];
-    for i in 0..rows {
-        for j in 0..cols {
-            t[j][i] = m[i][j];
+#[inline]
+pub fn transpose_mul_vec(matrix: &[f32], rows: usize, cols: usize, vector: &[f32], out: &mut [f32]) {
+    unsafe {
+        for c in 0..cols {
+            let mut sum = 0.0;
+            for r in 0..rows {
+                sum += *matrix.get_unchecked(r * cols + c) * *vector.get_unchecked(r);
+            }
+            *out.get_unchecked_mut(c) = sum;
         }
     }
-    t
 }

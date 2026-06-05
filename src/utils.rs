@@ -1,5 +1,6 @@
-use crate::network::MLP;
+use crate::network::{MLP, ForwardCache, Gradients};
 use crate::losses::cross_entropy;
+use rayon::prelude::*;
 
 pub fn shuffle(indices: &mut [usize]) {
     use std::time::SystemTime;
@@ -15,75 +16,54 @@ pub fn shuffle(indices: &mut [usize]) {
     }
 }
 
-pub fn argmax(v: &[f64]) -> usize {
+pub fn argmax(v: &[f32]) -> usize {
     let mut max_idx = 0;
     for i in 1..v.len() {
-        if v[i] > v[max_idx] {
-            max_idx = i;
-        }
+        if v[i] > v[max_idx] { max_idx = i; }
     }
     max_idx
 }
 
-pub fn zero_gradients_dw(weights: &[Vec<Vec<f64>>]) -> Vec<Vec<Vec<f64>>> {
-    weights.iter().map(|layer| {
-        layer.iter().map(|neuron| {
-            vec![0.0; neuron.len()]
-        }).collect()
-    }).collect()
+pub fn zero_gradients(mlp: &MLP) -> Gradients {
+    Gradients {
+        dw: mlp.weights.iter().map(|w| vec![0.0; w.len()]).collect(),
+        db: mlp.biases.iter().map(|b| vec![0.0; b.len()]).collect(),
+    }
 }
 
-pub fn zero_gradients_db(biases: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    biases.iter().map(|layer| vec![0.0; layer.len()]).collect()
+pub fn scale_gradients(grads: &mut Gradients, scale: f32) {
+    for w in grads.dw.iter_mut() { for x in w.iter_mut() { *x *= scale; } }
+    for b in grads.db.iter_mut() { for x in b.iter_mut() { *x *= scale; } }
 }
 
-pub fn accumulate_gradients(acc: &mut Vec<Vec<Vec<f64>>>, grads: &[Vec<Vec<f64>>]) {
-    for (a_layer, g_layer) in acc.iter_mut().zip(grads.iter()) {
-        for (a_neuron, g_neuron) in a_layer.iter_mut().zip(g_layer.iter()) {
-            for (a_w, g_w) in a_neuron.iter_mut().zip(g_neuron.iter()) {
-                *a_w += g_w;
+pub fn accumulate_gradients(acc: &mut Gradients, grads: &Gradients) {
+    for (a_w, g_w) in acc.dw.iter_mut().zip(grads.dw.iter()) {
+        for (a, g) in a_w.iter_mut().zip(g_w.iter()) { *a += g; }
+    }
+    for (a_b, g_b) in acc.db.iter_mut().zip(grads.db.iter()) {
+        for (a, g) in a_b.iter_mut().zip(g_b.iter()) { *a += g; }
+    }
+}
+
+pub fn evaluate_single(mlp: &MLP, images: &[Vec<f32>], labels: &[usize]) -> (f32, f32) {
+    let chunk_size = (images.len() + rayon::current_num_threads() - 1) / rayon::current_num_threads();
+
+    let (correct, total_loss): (usize, f32) = images
+        .par_chunks(chunk_size)
+        .zip(labels.par_chunks(chunk_size))
+        .map(|(imgs, lbls)| {
+            let mut cache = ForwardCache::new(&mlp.dims);
+            let mut c = 0usize;
+            let mut loss = 0.0f32;
+            for (img, &label) in imgs.iter().zip(lbls.iter()) {
+                let probs = mlp.forward(img, &mut cache);
+                if argmax(probs) == label { c += 1; }
+                loss += cross_entropy(probs, label);
             }
-        }
-    }
-}
+            (c, loss)
+        })
+        .reduce(|| (0usize, 0.0f32), |a, b| (a.0 + b.0, a.1 + b.1));
 
-pub fn accumulate_gradients_db(acc: &mut Vec<Vec<f64>>, grads: &[Vec<f64>]) {
-    for (a_layer, g_layer) in acc.iter_mut().zip(grads.iter()) {
-        for (a_b, g_b) in a_layer.iter_mut().zip(g_layer.iter()) {
-            *a_b += g_b;
-        }
-    }
-}
-
-pub fn scale_gradients(grads: &mut Vec<Vec<Vec<f64>>>, scale: f64) {
-    for layer in grads.iter_mut() {
-        for neuron in layer.iter_mut() {
-            for w in neuron.iter_mut() {
-                *w *= scale;
-            }
-        }
-    }
-}
-
-pub fn scale_gradients_db(grads: &mut Vec<Vec<f64>>, scale: f64) {
-    for layer in grads.iter_mut() {
-        for b in layer.iter_mut() {
-            *b *= scale;
-        }
-    }
-}
-
-pub fn evaluate(mlp: &MLP, images: &[Vec<f64>], labels: &[usize]) -> (f64, f64) {
-    let mut correct = 0;
-    let mut total_loss = 0.0;
-
-    for (img, label) in images.iter().zip(labels.iter()) {
-        let (probs, _) = mlp.forward(img);
-        if argmax(&probs) == *label {
-            correct += 1;
-        }
-        total_loss += cross_entropy(&probs, *label);
-    }
-
-    (correct as f64 / images.len() as f64, total_loss / images.len() as f64)
+    let n = images.len() as f32;
+    (correct as f32 / n, total_loss / n)
 }
