@@ -7,7 +7,7 @@ fn rand_uniform() -> f64 {
         SEED = SEED
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
-        ((SEED >> 33) as f64) / (u32::MAX as f64)
+        ((SEED >> 32) as f64) / (u32::MAX as f64 + 1.0)
     }
 }
 fn rand_normal() -> f64 {
