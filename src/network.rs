@@ -118,43 +118,62 @@ impl MLP {
                 );
             }
 
+            let b = &self.biases[i];
+            let z = &mut cache.pre_activations[i];
+            for s in 0..bs {
+                let offset = s * rows;
+                for r in 0..rows {
+                    z[offset + r] += b[r];
+                }
+            }
+
             let z = &cache.pre_activations[i];
             let a = &mut cache.activations[i + 1];
 
             if i == self.weights.len() - 1 {
-                let b = &self.biases[i];
                 for s in 0..bs {
-                    let z_offset = s * rows;
-                    let a_offset = s * rows;
+                    let offset = s * rows;
 
                     let mut max_val = f32::NEG_INFINITY;
                     for r in 0..rows {
-                        let val = z[z_offset + r] + b[r];
-                        if val > max_val {
-                            max_val = val;
-                        }
+                        if z[offset + r] > max_val { max_val = z[offset + r]; }
                     }
 
                     let mut sum_exp = 0.0;
                     for r in 0..rows {
-                        let val = z[z_offset + r] + b[r];
-                        let e = (val - max_val).exp();
-                        a[a_offset + r] = e;
+                        let e = (z[offset + r] - max_val).exp();
+                        a[offset + r] = e;
                         sum_exp += e;
                     }
                     let inv_sum = 1.0 / sum_exp;
                     for r in 0..rows {
-                        a[a_offset + r] *= inv_sum;
+                        a[offset + r] *= inv_sum;
                     }
                 }
             } else {
-                let b = &self.biases[i];
-                for s in 0..bs {
-                    let z_offset = s * rows;
-                    let a_offset = s * rows;
-                    for r in 0..rows {
-                        let val = z[z_offset + r] + b[r];
-                        a[a_offset + r] = if val > 0.0 { val } else { 0.0 };
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    let zero = std::arch::x86_64::_mm256_set1_ps(0.0);
+                    let simd_len = rows - (rows % 8);
+                    for s in 0..bs {
+                        let offset = s * rows;
+                        for r in (0..simd_len).step_by(8) {
+                            let z_vec = std::arch::x86_64::_mm256_loadu_ps(z.as_ptr().add(offset + r));
+                            let result = std::arch::x86_64::_mm256_max_ps(z_vec, zero);
+                            std::arch::x86_64::_mm256_storeu_ps(a.as_mut_ptr().add(offset + r), result);
+                        }
+                        for r in simd_len..rows {
+                            a[offset + r] = if z[offset + r] > 0.0 { z[offset + r] } else { 0.0 };
+                        }
+                    }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    for s in 0..bs {
+                        let offset = s * rows;
+                        for r in 0..rows {
+                            a[offset + r] = if z[offset + r] > 0.0 { z[offset + r] } else { 0.0 };
+                        }
                     }
                 }
             }
@@ -210,14 +229,36 @@ impl MLP {
         }
 
         let db_last = &mut acc_grads.db[num_layers - 1];
-        for r in 0..out_dim {
-            let mut sum = 0.0;
-            for s in 0..bs {
-                unsafe {
-                    sum += *delta_out_ptr.add(s * out_dim + r);
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            let inv_bs_vec = std::arch::x86_64::_mm256_set1_ps(inv_bs);
+            let simd_len = out_dim - (out_dim % 8);
+            for r in (0..simd_len).step_by(8) {
+                let mut acc = std::arch::x86_64::_mm256_setzero_ps();
+                for s in 0..bs {
+                    let val = std::arch::x86_64::_mm256_loadu_ps(delta_out_ptr.add(s * out_dim + r));
+                    acc = std::arch::x86_64::_mm256_add_ps(acc, val);
                 }
+                let scaled = std::arch::x86_64::_mm256_mul_ps(acc, inv_bs_vec);
+                let existing = std::arch::x86_64::_mm256_loadu_ps(db_last.as_ptr().add(r));
+                let result = std::arch::x86_64::_mm256_add_ps(existing, scaled);
+                std::arch::x86_64::_mm256_storeu_ps(db_last.as_mut_ptr().add(r), result);
             }
-            db_last[r] += sum * inv_bs;
+            for r in simd_len..out_dim {
+                let mut sum = 0.0;
+                for s in 0..bs { sum += *delta_out_ptr.add(s * out_dim + r); }
+                db_last[r] += sum * inv_bs;
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            for r in 0..out_dim {
+                let mut sum = 0.0;
+                for s in 0..bs {
+                    unsafe { sum += *delta_out_ptr.add(s * out_dim + r); }
+                }
+                db_last[r] += sum * inv_bs;
+            }
         }
 
         for l in (0..num_layers - 1).rev() {
@@ -246,12 +287,33 @@ impl MLP {
             }
 
             let z_prev = &cache.pre_activations[l];
-            for s in 0..bs {
-                let offset = s * next_dim;
-                for r in 0..next_dim {
-                    if z_prev[offset + r] + self.biases[l][r] <= 0.0 {
-                        unsafe {
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                let zero = std::arch::x86_64::_mm256_setzero_ps();
+                let simd_len = next_dim - (next_dim % 8);
+                for s in 0..bs {
+                    let offset = s * next_dim;
+                    for r in (0..simd_len).step_by(8) {
+                        let z = std::arch::x86_64::_mm256_loadu_ps(z_prev.as_ptr().add(offset + r));
+                        let mask = std::arch::x86_64::_mm256_cmp_ps(z, zero, 0x1E);
+                        let delta = std::arch::x86_64::_mm256_loadu_ps(delta_curr_ptr.add(offset + r));
+                        let result = std::arch::x86_64::_mm256_and_ps(delta, mask);
+                        std::arch::x86_64::_mm256_storeu_ps(delta_curr_ptr.add(offset + r), result);
+                    }
+                    for r in simd_len..next_dim {
+                        if z_prev[offset + r] <= 0.0 {
                             *delta_curr_ptr.add(offset + r) = 0.0;
+                        }
+                    }
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                for s in 0..bs {
+                    let offset = s * next_dim;
+                    for r in 0..next_dim {
+                        if z_prev[offset + r] <= 0.0 {
+                            unsafe { *delta_curr_ptr.add(offset + r) = 0.0; }
                         }
                     }
                 }
@@ -278,14 +340,36 @@ impl MLP {
             }
 
             let db_l = &mut acc_grads.db[l];
-            for rr in 0..r {
-                let mut sum = 0.0;
-                for s in 0..bs {
-                    unsafe {
-                        sum += *delta_curr_ptr.add(s * next_dim + rr);
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                let inv_bs_vec = std::arch::x86_64::_mm256_set1_ps(inv_bs);
+                let simd_len = r - (r % 8);
+                for rr in (0..simd_len).step_by(8) {
+                    let mut acc = std::arch::x86_64::_mm256_setzero_ps();
+                    for s in 0..bs {
+                        let val = std::arch::x86_64::_mm256_loadu_ps(delta_curr_ptr.add(s * next_dim + rr));
+                        acc = std::arch::x86_64::_mm256_add_ps(acc, val);
                     }
+                    let scaled = std::arch::x86_64::_mm256_mul_ps(acc, inv_bs_vec);
+                    let existing = std::arch::x86_64::_mm256_loadu_ps(db_l.as_ptr().add(rr));
+                    let result = std::arch::x86_64::_mm256_add_ps(existing, scaled);
+                    std::arch::x86_64::_mm256_storeu_ps(db_l.as_mut_ptr().add(rr), result);
                 }
-                db_l[rr] += sum * inv_bs;
+                for rr in simd_len..r {
+                    let mut sum = 0.0;
+                    for s in 0..bs { sum += *delta_curr_ptr.add(s * next_dim + rr); }
+                    db_l[rr] += sum * inv_bs;
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                for rr in 0..r {
+                    let mut sum = 0.0;
+                    for s in 0..bs {
+                        unsafe { sum += *delta_curr_ptr.add(s * next_dim + rr); }
+                    }
+                    db_l[rr] += sum * inv_bs;
+                }
             }
         }
     }
