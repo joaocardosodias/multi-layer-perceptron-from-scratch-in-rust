@@ -69,6 +69,16 @@ fn main() {
                     let bs = b_end - b_start;
 
                     for (i, &idx) in indices[b_start..b_end].iter().enumerate() {
+                        #[cfg(target_arch = "x86_64")]
+                        if i + 6 < bs {
+                            let pf_idx = indices[b_start + i + 6];
+                            unsafe {
+                                std::arch::x86_64::_mm_prefetch(
+                                    train_images.as_ptr().add(pf_idx * 784) as *const i8,
+                                    std::arch::x86_64::_MM_HINT_T0,
+                                );
+                            }
+                        }
                         let src = idx * 784;
                         let dst = i * 784;
                         bi[dst..dst + 784].copy_from_slice(&train_images[src..src + 784]);

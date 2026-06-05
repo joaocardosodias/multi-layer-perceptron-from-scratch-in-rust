@@ -33,6 +33,16 @@ pub fn evaluate_batch(mlp: &MLP, images: &[f32], num_images: usize, labels: &[us
             for chunk in indices.chunks(eval_bs) {
                 let bs = chunk.len();
                 for (k, &i) in chunk.iter().enumerate() {
+                    #[cfg(target_arch = "x86_64")]
+                    if k + 6 < bs {
+                        let pf_i = chunk[k + 6];
+                        unsafe {
+                            std::arch::x86_64::_mm_prefetch(
+                                images.as_ptr().add(pf_i * 784) as *const i8,
+                                std::arch::x86_64::_MM_HINT_T0,
+                            );
+                        }
+                    }
                     batch_input[k * 784..(k + 1) * 784]
                         .copy_from_slice(&images[i * 784..(i + 1) * 784]);
                 }
