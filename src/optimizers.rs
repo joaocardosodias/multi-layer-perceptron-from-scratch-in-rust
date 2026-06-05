@@ -22,12 +22,16 @@ pub fn sgd_update(
             let w_len = w.len();
             let w_ptr = w.as_mut_ptr();
             let dw_ptr = dw.as_ptr();
-            for i in (0..w_len).step_by(8) {
+            let w_simd_len = w_len - (w_len % 8);
+            for i in (0..w_simd_len).step_by(8) {
                 let w_vec = _mm256_loadu_ps(w_ptr.add(i));
                 let dw_vec = _mm256_loadu_ps(dw_ptr.add(i));
-                let update = _mm256_mul_ps(lr_vec, dw_vec);
-                let result = _mm256_sub_ps(w_vec, update);
+                // result = -(lr_vec * dw_vec) + w_vec
+                let result = _mm256_fnmadd_ps(lr_vec, dw_vec, w_vec);
                 _mm256_storeu_ps(w_ptr.add(i), result);
+            }
+            for i in w_simd_len..w_len {
+                w[i] -= learning_rate * dw[i];
             }
 
             let b_len = b.len();
@@ -37,8 +41,8 @@ pub fn sgd_update(
             for i in (0..simd_len).step_by(8) {
                 let b_vec = _mm256_loadu_ps(b_ptr.add(i));
                 let db_vec = _mm256_loadu_ps(db_ptr.add(i));
-                let update = _mm256_mul_ps(lr_vec, db_vec);
-                let result = _mm256_sub_ps(b_vec, update);
+                // result = -(lr_vec * db_vec) + b_vec
+                let result = _mm256_fnmadd_ps(lr_vec, db_vec, b_vec);
                 _mm256_storeu_ps(b_ptr.add(i), result);
             }
             for i in simd_len..b_len {

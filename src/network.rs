@@ -120,10 +120,29 @@ impl MLP {
 
             let b = &self.biases[i];
             let z = &mut cache.pre_activations[i];
-            for s in 0..bs {
-                let offset = s * rows;
-                for r in 0..rows {
-                    z[offset + r] += b[r];
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                let simd_len = rows - (rows % 8);
+                for s in 0..bs {
+                    let offset = s * rows;
+                    for r in (0..simd_len).step_by(8) {
+                        let z_vec = std::arch::x86_64::_mm256_loadu_ps(z.as_mut_ptr().add(offset + r));
+                        let b_vec = std::arch::x86_64::_mm256_loadu_ps(b.as_ptr().add(r));
+                        let result = std::arch::x86_64::_mm256_add_ps(z_vec, b_vec);
+                        std::arch::x86_64::_mm256_storeu_ps(z.as_mut_ptr().add(offset + r), result);
+                    }
+                    for r in simd_len..rows {
+                        z[offset + r] += b[r];
+                    }
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                for s in 0..bs {
+                    let offset = s * rows;
+                    for r in 0..rows {
+                        z[offset + r] += b[r];
+                    }
                 }
             }
 
@@ -239,9 +258,9 @@ impl MLP {
                     let val = std::arch::x86_64::_mm256_loadu_ps(delta_out_ptr.add(s * out_dim + r));
                     acc = std::arch::x86_64::_mm256_add_ps(acc, val);
                 }
-                let scaled = std::arch::x86_64::_mm256_mul_ps(acc, inv_bs_vec);
                 let existing = std::arch::x86_64::_mm256_loadu_ps(db_last.as_ptr().add(r));
-                let result = std::arch::x86_64::_mm256_add_ps(existing, scaled);
+                // result = (acc * inv_bs_vec) + existing
+                let result = std::arch::x86_64::_mm256_fmadd_ps(acc, inv_bs_vec, existing);
                 std::arch::x86_64::_mm256_storeu_ps(db_last.as_mut_ptr().add(r), result);
             }
             for r in simd_len..out_dim {
@@ -350,9 +369,9 @@ impl MLP {
                         let val = std::arch::x86_64::_mm256_loadu_ps(delta_curr_ptr.add(s * next_dim + rr));
                         acc = std::arch::x86_64::_mm256_add_ps(acc, val);
                     }
-                    let scaled = std::arch::x86_64::_mm256_mul_ps(acc, inv_bs_vec);
                     let existing = std::arch::x86_64::_mm256_loadu_ps(db_l.as_ptr().add(rr));
-                    let result = std::arch::x86_64::_mm256_add_ps(existing, scaled);
+                    // result = (acc * inv_bs_vec) + existing
+                    let result = std::arch::x86_64::_mm256_fmadd_ps(acc, inv_bs_vec, existing);
                     std::arch::x86_64::_mm256_storeu_ps(db_l.as_mut_ptr().add(rr), result);
                 }
                 for rr in simd_len..r {
