@@ -56,6 +56,8 @@ fn main() {
                 batch_targets[i] = train_labels[idx];
             }
 
+            mlp.forward_batch(&batch_input, &mut cache, current_batch_size);
+
             let out_dim = mlp.dims.last().unwrap().0;
             for s in 0..current_batch_size {
                 let offset = s * out_dim;
