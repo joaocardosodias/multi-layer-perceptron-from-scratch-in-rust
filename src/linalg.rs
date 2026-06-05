@@ -1,4 +1,5 @@
-use matrixmultiply::sgemm;
+use cblas_sys::{CBLAS_LAYOUT, CBLAS_TRANSPOSE};
+use std::os::raw::c_int;
 
 #[inline]
 pub unsafe fn gemm(
@@ -7,50 +8,33 @@ pub unsafe fn gemm(
     a: *const f32, rsa: isize, csa: isize,
     b: *const f32, rsb: isize, csb: isize,
     beta: f32,
-    c: *mut f32, rsc: isize, csc: isize,
+    c: *mut f32, rsc: isize, _csc: isize,
 ) {
+    let layout = CBLAS_LAYOUT::CblasRowMajor; 
+    
+    let trans_a = if csa == 1 { CBLAS_TRANSPOSE::CblasNoTrans } else { CBLAS_TRANSPOSE::CblasTrans };
+    let lda: c_int = if csa == 1 { rsa as c_int } else { csa as c_int };
+    
+    let trans_b = if csb == 1 { CBLAS_TRANSPOSE::CblasNoTrans } else { CBLAS_TRANSPOSE::CblasTrans };
+    let ldb: c_int = if csb == 1 { rsb as c_int } else { csb as c_int };
+    
+    let ldc: c_int = rsc as c_int;
+
     unsafe {
-        sgemm(m, k, n, alpha, a, rsa, csa, b, rsb, csb, beta, c, rsc, csc);
+        cblas_sys::cblas_sgemm(
+            layout,
+            trans_a,
+            trans_b,
+            m as c_int,
+            n as c_int,
+            k as c_int,
+            alpha,
+            a, lda,
+            b, ldb,
+            beta,
+            c, ldc,
+        );
     }
 }
 
-#[inline]
-pub fn mat_vec_mul(matrix: &[f32], rows: usize, cols: usize, vector: &[f32], out: &mut [f32]) {
-    unsafe {
-        for r in 0..rows {
-            let offset = r * cols;
-            let mut sum = 0.0;
-            for c in 0..cols {
-                sum += *matrix.get_unchecked(offset + c) * *vector.get_unchecked(c);
-            }
-            *out.get_unchecked_mut(r) = sum;
-        }
-    }
-}
 
-#[inline]
-pub fn add_outer_product(a: &[f32], b: &[f32], rows: usize, cols: usize, out: &mut [f32]) {
-    unsafe {
-        for r in 0..rows {
-            let offset = r * cols;
-            let val_a = *a.get_unchecked(r);
-            for c in 0..cols {
-                let val_b = *b.get_unchecked(c);
-                *out.get_unchecked_mut(offset + c) += val_a * val_b;
-            }
-        }
-    }
-}
-
-#[inline]
-pub fn transpose_mul_vec(matrix: &[f32], rows: usize, cols: usize, vector: &[f32], out: &mut [f32]) {
-    unsafe {
-        for c in 0..cols {
-            let mut sum = 0.0;
-            for r in 0..rows {
-                sum += *matrix.get_unchecked(r * cols + c) * *vector.get_unchecked(r);
-            }
-            *out.get_unchecked_mut(c) = sum;
-        }
-    }
-}

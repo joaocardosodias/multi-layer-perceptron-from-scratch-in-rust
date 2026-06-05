@@ -1,4 +1,3 @@
-mod activations;
 mod data;
 mod linalg;
 mod losses;
@@ -14,6 +13,12 @@ use std::time::Instant;
 use utils::*;
 
 fn main() {
+    
+    unsafe {
+        std::env::set_var("MKL_NUM_THREADS", "1");
+        std::env::set_var("OMP_NUM_THREADS", "1");
+    }
+
     let (train_images, num_train) = load_images("src/data/train-images-idx3-ubyte/train-images.idx3-ubyte");
     let train_labels = load_labels("src/data/train-labels-idx1-ubyte/train-labels.idx1-ubyte");
     let (test_images, num_test) = load_images("src/data/t10k-images-idx3-ubyte/t10k-images.idx3-ubyte");
@@ -24,8 +29,8 @@ fn main() {
 
     let mut mlp = MLP::new(&[784, 256, 128, 10]);
 
-    let learning_rate = 0.01;
-    let batch_size = 64;
+    let learning_rate = 0.04;
+    let batch_size = 256;
     let epochs = 25;
 
     let total_start = Instant::now();
@@ -77,7 +82,8 @@ fn main() {
                     let mut corr = 0usize;
                     for s in 0..bs {
                         let off = s * out_dim;
-                        let probs = &cache.activations[mlp.weights.len()][off..off + out_dim];
+                        let a_off = cache.a_offsets[mlp.dims.len()];
+                        let probs = &cache.activations[a_off + off .. a_off + off + out_dim];
                         loss += cross_entropy(probs, bt[s]);
                         if argmax(probs) == bt[s] { corr += 1; }
                     }
@@ -94,7 +100,7 @@ fn main() {
                 epoch_loss += loss;
                 correct += corr;
                 total += bs;
-                optimizers::sgd_update(&mut mlp.weights, &mut mlp.biases, &thread_data[i].3, lr);
+                optimizers::sgd_update(&mut mlp, &thread_data[i].3, lr);
             }
         }
 

@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-matrixmultiply = "0.3"
 rayon = "1.10"
 rand = "0.8"
 rand_distr = "0.4"
+cblas-sys = "0.3.0"
 
 
 [profile.release]
