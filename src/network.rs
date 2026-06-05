@@ -1,25 +1,7 @@
 use crate::linalg::gemm;
-
-static mut SEED: u64 = 42;
-
-#[inline]
-fn rand_uniform() -> f32 {
-    unsafe {
-        SEED = SEED
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((SEED >> 32) as f32) / (u32::MAX as f32 + 1.0)
-    }
-}
-
-#[inline]
-fn rand_normal() -> f32 {
-    let mut sum = 0.0;
-    for _ in 0..12 {
-        sum += rand_uniform();
-    }
-    sum - 6.0
-}
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand_distr::{Distribution, Normal};
 
 pub struct MLP {
     pub weights: Vec<Vec<f32>>,
@@ -87,14 +69,17 @@ impl MLP {
         let mut biases = Vec::new();
         let mut dims = Vec::new();
 
+        let mut rng = StdRng::seed_from_u64(42);
+
         for i in 0..(architecture.len() - 1) {
             let n_in = architecture[i];
             let n_out = architecture[i + 1];
             let std_dev = (2.0 / n_in as f32).sqrt();
+            let normal = Normal::new(0.0, std_dev).unwrap();
 
             let mut layer_w = vec![0.0; n_out * n_in];
             for w in layer_w.iter_mut() {
-                *w = rand_normal() * std_dev;
+                *w = normal.sample(&mut rng) as f32;
             }
 
             weights.push(layer_w);
