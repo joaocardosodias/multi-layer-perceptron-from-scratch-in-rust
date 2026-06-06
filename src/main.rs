@@ -8,12 +8,14 @@ mod utils;
 use data::{load_images, load_labels};
 use losses::cross_entropy;
 use network::{BatchCache, Gradients, MLP};
+use optimizers::AdamState;
 use rayon::prelude::*;
 use std::time::Instant;
 use utils::*;
+use rand::Rng;
+
 
 fn main() {
-    
     unsafe {
         std::env::set_var("MKL_NUM_THREADS", "1");
         std::env::set_var("OMP_NUM_THREADS", "1");
@@ -27,20 +29,22 @@ fn main() {
     let num_threads = rayon::current_num_threads();
     println!("Treino: {} | Teste: {} | Threads: {}", num_train, num_test, num_threads);
 
-    let mut mlp = MLP::new(&[784, 256, 128, 10]);
+    let mut mlp = MLP::new(&[784, 1024, 512, 10]);
 
-    let learning_rate = 0.04;
     let batch_size = 256;
-    let epochs = 25;
+    let epochs = 150;
 
+    let mut adam = AdamState::new(&mlp);
+    let mut acc_grads = Gradients::new(&mlp);
     let total_start = Instant::now();
 
-    let mut thread_data: Vec<(Vec<f32>, Vec<usize>, BatchCache, Gradients)> = (0..num_threads)
-        .map(|_| (
+    let mut thread_data: Vec<(Vec<f32>, Vec<usize>, BatchCache, Gradients, rand::rngs::StdRng)> = (0..num_threads)
+        .map(|t| (
             vec![0.0f32; batch_size * 784],
             vec![0usize; batch_size],
             BatchCache::new(&mlp.dims, batch_size),
             Gradients::new(&mlp),
+            rand::SeedableRng::seed_from_u64(42 + t as u64),
         ))
         .collect();
 
@@ -49,6 +53,11 @@ fn main() {
         .step_by(batch_size)
         .map(|s| (s, (s + batch_size).min(num_train)))
         .collect();
+
+    let num_super_chunks = (batch_ranges.len() + num_threads - 1) / num_threads;
+    let total_steps = epochs * num_super_chunks;
+    let max_lr = 9e-3;
+    let mut scheduler = optimizers::OneCycleLR::new(total_steps, max_lr);
 
     for epoch in 0..epochs {
         let epoch_start = Instant::now();
@@ -65,7 +74,7 @@ fn main() {
                 .par_iter_mut()
                 .zip(super_chunk.par_iter())
                 .map(|(res, &(b_start, b_end))| {
-                    let (bi, bt, cache, grads) = res;
+                    let (bi, bt, cache, grads, rng) = res;
                     let bs = b_end - b_start;
 
                     for (i, &idx) in indices[b_start..b_end].iter().enumerate() {
@@ -81,11 +90,28 @@ fn main() {
                         }
                         let src = idx * 784;
                         let dst = i * 784;
-                        bi[dst..dst + 784].copy_from_slice(&train_images[src..src + 784]);
+                        if rng.gen_bool(0.85) {
+                            let angle = rng.gen_range(-10.0..=10.0);
+                            let tx = rng.gen_range(-1.5..=1.5);
+                            let ty = rng.gen_range(-1.5..=1.5);
+                            let mut geo_buf = [0.0f32; 784];
+                            augment_image(
+                                &train_images[src..src + 784],
+                                &mut geo_buf,
+                                angle, tx, ty,
+                            );
+                            elastic_distort(
+                                &geo_buf,
+                                &mut bi[dst..dst + 784],
+                                38.0, 6.0, rng,
+                            );
+                        } else {
+                            bi[dst..dst + 784].copy_from_slice(&train_images[src..src + 784]);
+                        }
                         bt[i] = train_labels[idx];
                     }
 
-                    mlp.forward_batch(bi, cache, bs);
+                    mlp.forward_batch(bi, cache, bs, true, rng);
 
                     let out_dim = mlp.dims.last().unwrap().0;
                     let mut loss = 0.0f32;
@@ -105,13 +131,15 @@ fn main() {
                 })
                 .collect();
 
-            let lr = learning_rate / (1.0 + 0.01 * epoch as f32);
+            acc_grads.zero();
             for (i, &(loss, corr, bs)) in metrics.iter().enumerate() {
                 epoch_loss += loss;
                 correct += corr;
                 total += bs;
-                optimizers::sgd_update(&mut mlp, &thread_data[i].3, lr);
+                acc_grads.accumulate(&thread_data[i].3);
             }
+            let step_lr = scheduler.step();
+            optimizers::adam_update(&mut mlp, &acc_grads, &mut adam, step_lr);
         }
 
         let train_time = epoch_start.elapsed();
@@ -132,5 +160,12 @@ fn main() {
         );
     }
 
-    println!("Tempo total: {:.2}s", total_start.elapsed().as_secs_f64());
+    println!("Tempo total de treino: {:.2}s", total_start.elapsed().as_secs_f64());
+    
+    println!("Avaliando com APAC (M=64) ...");
+    let apac_start = Instant::now();
+    let (apac_acc, apac_loss) = evaluate_apac(&mlp, &test_images, num_test, &test_labels, 64);
+    println!("APAC Test Acc: {:.2}% | Test Loss: {:.4} | Tempo: {:.2}s", 
+             100.0 * apac_acc, apac_loss, apac_start.elapsed().as_secs_f64());
 }
+

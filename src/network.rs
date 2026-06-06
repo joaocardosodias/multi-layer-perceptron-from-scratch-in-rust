@@ -18,6 +18,8 @@ pub struct BatchCache {
     pub a_offsets: Vec<usize>,
     pub deltas: Vec<f32>,
     pub d_offsets: Vec<usize>,
+    pub dropout_masks: Vec<f32>,
+    pub dm_offsets: Vec<usize>,
 }
 
 impl BatchCache {
@@ -28,6 +30,8 @@ impl BatchCache {
         let mut a_offsets = Vec::new();
         let mut deltas = Vec::new();
         let mut d_offsets = Vec::new();
+        let mut dropout_masks = Vec::new();
+        let mut dm_offsets = Vec::new();
 
         a_offsets.push(0);
         activations.resize(batch_size * dims[0].1, 0.0);
@@ -41,12 +45,25 @@ impl BatchCache {
 
             d_offsets.push(deltas.len());
             deltas.resize(deltas.len() + batch_size * r, 0.0);
+
+            dm_offsets.push(dropout_masks.len());
+            dropout_masks.resize(dropout_masks.len() + batch_size * r, 1.0);
         }
         p_offsets.push(pre_activations.len());
         a_offsets.push(activations.len());
         d_offsets.push(deltas.len());
+        dm_offsets.push(dropout_masks.len());
 
-        BatchCache { pre_activations, p_offsets, activations, a_offsets, deltas, d_offsets }
+        BatchCache {
+            pre_activations,
+            p_offsets,
+            activations,
+            a_offsets,
+            deltas,
+            d_offsets,
+            dropout_masks,
+            dm_offsets,
+        }
     }
 }
 
@@ -70,6 +87,34 @@ impl Gradients {
     pub fn zero(&mut self) {
         self.dw.fill(0.0);
         self.db.fill(0.0);
+    }
+
+    pub fn accumulate(&mut self, src: &Gradients) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::*;
+            let wl = self.dw.len();
+            let sw = wl - (wl % 8);
+            for i in (0..sw).step_by(8) {
+                let a = _mm256_loadu_ps(self.dw.as_ptr().add(i));
+                let b = _mm256_loadu_ps(src.dw.as_ptr().add(i));
+                _mm256_storeu_ps(self.dw.as_mut_ptr().add(i), _mm256_add_ps(a, b));
+            }
+            for i in sw..wl { self.dw[i] += src.dw[i]; }
+            let bl = self.db.len();
+            let sb = bl - (bl % 8);
+            for i in (0..sb).step_by(8) {
+                let a = _mm256_loadu_ps(self.db.as_ptr().add(i));
+                let b = _mm256_loadu_ps(src.db.as_ptr().add(i));
+                _mm256_storeu_ps(self.db.as_mut_ptr().add(i), _mm256_add_ps(a, b));
+            }
+            for i in sb..bl { self.db[i] += src.db[i]; }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            for i in 0..self.dw.len() { self.dw[i] += src.dw[i]; }
+            for i in 0..self.db.len() { self.db[i] += src.db[i]; }
+        }
     }
 }
 
@@ -107,7 +152,9 @@ impl MLP {
         MLP { weights, w_offsets, biases, b_offsets, dims }
     }
 
-    pub fn forward_batch(&self, input_batch: &[f32], cache: &mut BatchCache, bs: usize) {
+    pub fn forward_batch(&self, input_batch: &[f32], cache: &mut BatchCache, bs: usize, is_training: bool, rng: &mut StdRng) {
+        use rand::Rng;
+
         let a_start = cache.a_offsets[0];
         let a_end = cache.a_offsets[1];
         cache.activations[a_start..a_end].copy_from_slice(input_batch);
@@ -212,6 +259,40 @@ impl MLP {
                                 let val = *z_ptr.add(offset + r);
                                 *a_ptr.add(offset + r) = if val > 0.0 { val } else { 0.0 };
                             }
+                        }
+                    }
+                }
+
+                if is_training {
+                    let p_keep = 0.9f32;
+                    let scale = 1.0 / p_keep;
+                    let start = cache.dm_offsets[i];
+                    let end = cache.dm_offsets[i + 1];
+                    for k in start..end {
+                        cache.dropout_masks[k] = if rng.gen_range(0.0..1.0) < p_keep { scale } else { 0.0 };
+                    }
+
+                    #[cfg(target_arch = "x86_64")]
+                    unsafe {
+                        use std::arch::x86_64::*;
+                        let total_len = bs * rows;
+                        let simd_len = total_len - (total_len % 8);
+                        let m_ptr = cache.dropout_masks[start..].as_ptr();
+                        for r in (0..simd_len).step_by(8) {
+                            let a_vec = _mm256_loadu_ps(a_ptr.add(r));
+                            let m_vec = _mm256_loadu_ps(m_ptr.add(r));
+                            let res = _mm256_mul_ps(a_vec, m_vec);
+                            _mm256_storeu_ps(a_ptr.add(r), res);
+                        }
+                        for r in simd_len..total_len {
+                            *a_ptr.add(r) *= *m_ptr.add(r);
+                        }
+                    }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    {
+                        let start_a = cache.a_offsets[i + 1];
+                        for r in 0..(bs * rows) {
+                            cache.activations[start_a + r] *= cache.dropout_masks[start + r];
                         }
                     }
                 }
@@ -359,6 +440,32 @@ impl MLP {
                     }
                 }
             }
+
+            // Apply dropout mask to delta_curr_ptr
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                use std::arch::x86_64::*;
+                let total_len = bs * next_dim;
+                let simd_len = total_len - (total_len % 8);
+                let dm_ptr = cache.dropout_masks[cache.dm_offsets[l]..].as_ptr();
+                for r in (0..simd_len).step_by(8) {
+                    let d_vec = _mm256_loadu_ps(delta_curr_ptr.add(r));
+                    let m_vec = _mm256_loadu_ps(dm_ptr.add(r));
+                    let res = _mm256_mul_ps(d_vec, m_vec);
+                    _mm256_storeu_ps(delta_curr_ptr.add(r), res);
+                }
+                for r in simd_len..total_len {
+                    *delta_curr_ptr.add(r) *= *dm_ptr.add(r);
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                let start_dm = cache.dm_offsets[l];
+                for r in 0..(bs * next_dim) {
+                    unsafe { *delta_curr_ptr.add(r) *= cache.dropout_masks[start_dm + r]; }
+                }
+            }
+
 
             let (r, c) = self.dims[l];
             let a_prev_ptr = cache.activations[cache.a_offsets[l]..].as_ptr();
