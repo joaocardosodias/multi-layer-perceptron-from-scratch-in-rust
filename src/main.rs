@@ -29,14 +29,16 @@ fn main() {
     let num_threads = rayon::current_num_threads();
     println!("Treino: {} | Teste: {} | Threads: {}", num_train, num_test, num_threads);
 
-    let mut mlp = MLP::new(&[784, 1024, 512, 10]);
+    let mut mlp = MLP::new(&[784, 2048, 1024, 10]);
 
     let batch_size = 256;
-    let epochs = 150;
+    let epochs = 300;
 
     let mut adam = AdamState::new(&mlp);
     let mut acc_grads = Gradients::new(&mlp);
     let total_start = Instant::now();
+    let mut best_test_acc = 0.0f32;
+    let mut best_epoch = 0;
 
     let mut thread_data: Vec<(Vec<f32>, Vec<usize>, BatchCache, Gradients, rand::rngs::StdRng)> = (0..num_threads)
         .map(|t| (
@@ -56,7 +58,7 @@ fn main() {
 
     let num_super_chunks = (batch_ranges.len() + num_threads - 1) / num_threads;
     let total_steps = epochs * num_super_chunks;
-    let max_lr = 9e-3;
+    let max_lr = 3e-3;
     let mut scheduler = optimizers::OneCycleLR::new(total_steps, max_lr);
 
     for epoch in 0..epochs {
@@ -103,7 +105,7 @@ fn main() {
                             elastic_distort(
                                 &geo_buf,
                                 &mut bi[dst..dst + 784],
-                                38.0, 6.0, rng,
+                                36.0, 5.0, rng,
                             );
                         } else {
                             bi[dst..dst + 784].copy_from_slice(&train_images[src..src + 784]);
@@ -158,9 +160,14 @@ fn main() {
             "  Treino: {:.2}s | Avaliacao: {:.2}s",
             train_time.as_secs_f64(), eval_time.as_secs_f64()
         );
+
+        if test_acc > best_test_acc {
+            best_test_acc = test_acc;
+            best_epoch = epoch + 1;
+        }
     }
 
     println!("Tempo total de treino: {:.2}s", total_start.elapsed().as_secs_f64());
-    
+    println!("Melhor acuracia de teste: {:.2}% na Epoca {}", best_test_acc * 100.0, best_epoch);
 }
 
