@@ -162,10 +162,5 @@ fn main() {
 
     println!("Tempo total de treino: {:.2}s", total_start.elapsed().as_secs_f64());
     
-    println!("Avaliando com APAC (M=64) ...");
-    let apac_start = Instant::now();
-    let (apac_acc, apac_loss) = evaluate_apac(&mlp, &test_images, num_test, &test_labels, 64);
-    println!("APAC Test Acc: {:.2}% | Test Loss: {:.4} | Tempo: {:.2}s", 
-             100.0 * apac_acc, apac_loss, apac_start.elapsed().as_secs_f64());
 }
 
