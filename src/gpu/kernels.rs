@@ -353,15 +353,15 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     // ==== AFFINE (igual a CPU) ====
     unsigned int s2 = s1 ^ 0x9e3779b9u;
     s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
-    float angle_deg = (s2 & 0x7FFFFFFFu) * (20.0f / 2147483647.0f) - 10.0f;
+    float angle_deg = (s2 & 0x7FFFFFFFu) * (30.0f / 2147483647.0f) - 15.0f;
 
     unsigned int s3 = s2 ^ 0x85ebca6bu;
     s3 ^= s3 << 13; s3 ^= s3 >> 17; s3 ^= s3 << 5;
-    float tx = (s3 & 0x7FFFFFFFu) * (3.0f / 2147483647.0f) - 1.5f;
+    float tx = (s3 & 0x7FFFFFFFu) * (5.0f / 2147483647.0f) - 2.5f;
 
     unsigned int s4 = s3 ^ 0xc2b2ae35u;
     s4 ^= s4 << 13; s4 ^= s4 >> 17; s4 ^= s4 << 5;
-    float ty = (s4 & 0x7FFFFFFFu) * (3.0f / 2147483647.0f) - 1.5f;
+    float ty = (s4 & 0x7FFFFFFFu) * (5.0f / 2147483647.0f) - 2.5f;
 
     float angle_rad = angle_deg * 3.14159265f / 180.0f;
     float cos_a = cosf(angle_rad);
@@ -383,9 +383,9 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     sey ^= sey << 13; sey ^= sey >> 17; sey ^= sey << 5;
     float off_y = (sey & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
 
-    // Aplicar offsets (alpha=36, sigma=5 aproximado)
-    src_x += off_x * 1.8f;
-    src_y += off_y * 1.8f;
+    // Aplicar offsets (alpha=36, sigma=5 aproximado - sem blur, usa maior amplitude)
+    src_x += off_x * 7.2f;
+    src_y += off_y * 7.2f;
 
     if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
         int x0 = (int)floorf(src_x);
