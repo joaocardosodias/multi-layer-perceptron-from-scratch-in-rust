@@ -29,7 +29,7 @@ impl AdamState {
 const BETA1: f32 = 0.9;
 const BETA2: f32 = 0.999;
 const EPS: f32 = 1e-8;
-const WEIGHT_DECAY: f32 = 1e-4;
+const WEIGHT_DECAY: f32 = 1e-3;
 
 pub fn adam_update(
     mlp: &mut MLP,

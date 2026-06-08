@@ -31,13 +31,13 @@ fn main() {
     let test_labels_gpu = dev.htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de teste");
 
     // 3. Cria MLP e kernels na GPU
-    let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
+    let mut mlp = MLP::new(&dev, &[784, 4096, 2048, 512, 10]).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
     // 4. Buffers de batch e índices
     let batch_size = 1024;
-    let epochs = 300;
+    let epochs = 1000;
     let mut batch_input = dev.alloc_zeros::<f32>(batch_size * 784).expect("Falha alloc batch");
     let mut batch_labels = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc labels");
     let mut batch_indices = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc indices");
@@ -58,10 +58,12 @@ fn main() {
     let total_start = Instant::now();
     let mut best_test_acc = 0.0f32;
     let mut best_epoch = 0;
+    let mut epochs_without_improvement = 0;
+    let patience = 50;  // early stopping
 
     let num_batches = (num_train + batch_size - 1) / batch_size;
     let total_steps = epochs * num_batches;
-    let max_lr = 3e-3;
+    let max_lr = 1e-2;
     let mut scheduler = OneCycleLR::new(total_steps, max_lr);
 
     for epoch in 0..epochs {
@@ -105,7 +107,7 @@ fn main() {
 
             // Forward
             let dev_input = batch_input.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut cache, bs, true, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut cache, bs, true, 0.5, &kernels, &blas)
                 .expect("Falha forward");
 
             // Métricas na GPU
@@ -189,7 +191,7 @@ fn main() {
             ).expect("Falha gather labels eval");
 
             let dev_input = batch_input_eval.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, 1.0, &kernels, &blas)
                 .expect("Falha forward eval");
 
             let a_last = eval_cache.a_offsets[mlp.dims.len()];
@@ -239,6 +241,14 @@ fn main() {
         if test_acc > best_test_acc {
             best_test_acc = test_acc;
             best_epoch = epoch + 1;
+            epochs_without_improvement = 0;
+        } else {
+            epochs_without_improvement += 1;
+        }
+
+        if epochs_without_improvement >= patience {
+            println!("Early stopping ativado após {} épocas sem melhora.", patience);
+            break;
         }
     }
 
