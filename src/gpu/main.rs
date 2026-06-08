@@ -31,12 +31,12 @@ fn main() {
     let test_labels_gpu = dev.htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de teste");
 
     // 3. Cria MLP e kernels na GPU
-    let mut mlp = MLP::new(&dev, &[784, 4096, 2048, 512, 10]).expect("Falha ao criar MLP");
+    let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
     // 4. Buffers de batch e índices
-    let batch_size = 1024;
+    let batch_size = 256;
     let epochs = 300;
     let mut batch_input = dev.alloc_zeros::<f32>(batch_size * 784).expect("Falha alloc batch");
     let mut batch_labels = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc labels");
