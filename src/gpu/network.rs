@@ -155,7 +155,7 @@ impl MLP {
 
                 let mut z_slice = cache.pre_activations.slice_mut(p_off..p_off + bs * rows);
 
-                blas.gemm_ta(bs, cols, rows, 1.0, &a_prev_view, &w_slice, 0.0, &mut z_slice)?;
+                blas.gemm_tb(bs, cols, rows, 1.0, &a_prev_view, &w_slice, 0.0, &mut z_slice)?;
 
                 launch_bias_add(&kernels.bias_add, &mut z_slice, &b_slice, bs, rows)?;
             }

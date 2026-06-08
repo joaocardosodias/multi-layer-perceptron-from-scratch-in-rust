@@ -54,6 +54,8 @@ fn main() {
     let max_lr      = 3e-3;
     let mut scheduler = OneCycleLR::new(total_steps, max_lr);
 
+    let mut batch_input_host = vec![0.0f32; batch_size * 784];
+
     for epoch in 0..epochs {
         let epoch_start = Instant::now();
 
@@ -73,7 +75,6 @@ fn main() {
                 let src = idx * 784;
                 let dst = i * 784;
                 let mut host_buf   = [0.0f32; 784];
-                let mut elastic_buf = [0.0f32; 784];
 
                 use rand::Rng;
                 if rng.gen_bool(0.85) {
@@ -81,20 +82,18 @@ fn main() {
                     let tx    = rng.gen_range(-1.5f32..=1.5);
                     let ty    = rng.gen_range(-1.5f32..=1.5);
                     augment_image(&train_images[src..src + 784], &mut host_buf, angle, tx, ty);
-                    elastic_distort(&host_buf, &mut elastic_buf, 36.0, 5.0, &mut rng);
-
-                    let mut dev_slice = batch_input.slice_mut(dst..dst + 784);
-                    dev.htod_sync_copy_into(&elastic_buf, &mut dev_slice)
-                        .expect("Falha ao copiar imagem augmentada");
+                    elastic_distort(&host_buf, &mut batch_input_host[dst..dst + 784], 36.0, 5.0, &mut rng);
                 } else {
-                    let mut dev_slice = batch_input.slice_mut(dst..dst + 784);
-                    dev.htod_sync_copy_into(&train_images[src..src + 784], &mut dev_slice)
-                        .expect("Falha ao copiar imagem original");
+                    batch_input_host[dst..dst + 784].copy_from_slice(&train_images[src..src + 784]);
                 }
                 batch_targets_host[i] = train_labels[idx] as i32;
             }
 
             {
+                let mut dev_slice = batch_input.slice_mut(0..bs * 784);
+                dev.htod_sync_copy_into(&batch_input_host[0..bs * 784], &mut dev_slice)
+                    .expect("Falha ao copiar batch input");
+                
                 let mut dev_targets = batch_targets.slice_mut(0..bs);
                 dev.htod_sync_copy_into(&batch_targets_host[..bs], &mut dev_targets)
                     .expect("Falha ao copiar targets");
