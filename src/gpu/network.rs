@@ -133,7 +133,6 @@ impl MLP {
         cache: &mut BatchCache,
         bs: usize,
         is_training: bool,
-        p_keep: f32,
         kernels: &Kernels,
         blas: &BlasHandle,
     ) -> Result<(), GpuError> {
@@ -170,7 +169,7 @@ impl MLP {
                 launch_relu(&kernels.relu, &mut z_slice, &mut a_slice, bs * rows)?;
                 if is_training {
                     let seed = fastrand::u32(..);
-                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, p_keep, seed)?;
+                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, 0.9, seed)?;
                 }
             }
         }

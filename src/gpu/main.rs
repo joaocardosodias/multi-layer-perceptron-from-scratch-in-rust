@@ -58,12 +58,10 @@ fn main() {
     let total_start = Instant::now();
     let mut best_test_acc = 0.0f32;
     let mut best_epoch = 0;
-    let mut epochs_without_improvement = 0;
-    let patience = 50;  // early stopping
 
     let num_batches = (num_train + batch_size - 1) / batch_size;
     let total_steps = epochs * num_batches;
-    let max_lr = 1e-2;
+    let max_lr = 3e-3;
     let mut scheduler = OneCycleLR::new(total_steps, max_lr);
 
     for epoch in 0..epochs {
@@ -107,7 +105,7 @@ fn main() {
 
             // Forward
             let dev_input = batch_input.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut cache, bs, true, 0.5, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut cache, bs, true, &kernels, &blas)
                 .expect("Falha forward");
 
             // Métricas na GPU
@@ -191,7 +189,7 @@ fn main() {
             ).expect("Falha gather labels eval");
 
             let dev_input = batch_input_eval.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, 1.0, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, &kernels, &blas)
                 .expect("Falha forward eval");
 
             let a_last = eval_cache.a_offsets[mlp.dims.len()];
@@ -241,14 +239,6 @@ fn main() {
         if test_acc > best_test_acc {
             best_test_acc = test_acc;
             best_epoch = epoch + 1;
-            epochs_without_improvement = 0;
-        } else {
-            epochs_without_improvement += 1;
-        }
-
-        if epochs_without_improvement >= patience {
-            println!("Early stopping ativado após {} épocas sem melhora.", patience);
-            break;
         }
     }
 

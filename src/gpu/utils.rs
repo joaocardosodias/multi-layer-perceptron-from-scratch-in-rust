@@ -45,7 +45,7 @@ pub fn evaluate_batch(
 
         // Forward
         let dev_input = batch_input.slice(0..bs * 784);
-        mlp.forward_batch(&dev_input, &mut cache, bs, false, 1.0, kernels, blas)?;
+        mlp.forward_batch(&dev_input, &mut cache, bs, false, kernels, blas)?;
 
         // Copiar resultados de volta para CPU
         let a_last_off = cache.a_offsets[mlp.dims.len()];
