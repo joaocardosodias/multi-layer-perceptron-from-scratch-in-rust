@@ -17,7 +17,7 @@ use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_c
 
 fn main() {
     const BATCH_SIZE: usize = 256;
-    const EPOCHS: usize = 400;
+    const EPOCHS: usize = 300;
     const LABEL_SMOOTHING: f32 = 0.0;
     const MAX_LR: f32 = 3e-3;
     const AUGMENT_P_KEEP: f32 = 0.85;
@@ -36,7 +36,7 @@ fn main() {
     let test_labels_gpu = dev.htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de teste");
 
     // 3. Cria MLP e kernels na GPU
-    let mut mlp = MLP::new(&dev, &[784, 4096, 2048, 10]).expect("Falha ao criar MLP");
+    let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
