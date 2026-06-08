@@ -15,7 +15,7 @@ use linalg::BlasHandle;
 use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
 
 fn main() {
-    const BATCH_SIZE: usize = 1024;
+    const BATCH_SIZE: usize = 256;
     const EPOCHS: usize = 300;
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
