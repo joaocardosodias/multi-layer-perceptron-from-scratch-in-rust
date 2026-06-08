@@ -60,7 +60,7 @@ fn main() {
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
     // 7. Elastic distortion: buffers temporários e kernel gaussiano (exato como CPU)
-    const ELASTIC_ALPHA: f32 = 40.0;
+    const ELASTIC_ALPHA: f32 = 50.0;
     const ELASTIC_SIGMA: f32 = 5.0;
     let elastic_radius = (2.0 * ELASTIC_SIGMA).ceil() as usize;
     let kernel_size = elastic_radius * 2 + 1;
