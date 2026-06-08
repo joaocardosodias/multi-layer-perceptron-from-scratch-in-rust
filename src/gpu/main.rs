@@ -12,7 +12,7 @@ use mlp::common::data::{load_images, load_labels};
 use network::{BatchCache, Gradients, MLP};
 use optimizers::{AdamState, OneCycleLR, adam_update};
 use linalg::BlasHandle;
-use kernels::{Kernels, launch_gather_images, launch_count_correct, launch_compute_loss};
+use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
 
 fn main() {
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
@@ -36,9 +36,10 @@ fn main() {
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
     // 4. Buffers de batch e índices
-    let batch_size = 512;
+    let batch_size = 1024;
     let epochs = 300;
     let mut batch_input = dev.alloc_zeros::<f32>(batch_size * 784).expect("Falha alloc batch");
+    let mut batch_labels = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc labels");
     let mut batch_indices = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc indices");
     let mut batch_indices_cpu = vec![0i32; batch_size];
     let mut indices: Vec<usize> = (0..num_train).collect();
@@ -74,23 +75,33 @@ fn main() {
         for batch_start in (0..num_train).step_by(batch_size) {
             let bs = (batch_start + batch_size).min(num_train) - batch_start;
 
-            // Copia índices CPU -> GPU
+            // Copia índices CPU -> GPU (apenas 1024 ints)
             for i in 0..bs {
                 batch_indices_cpu[i] = indices[batch_start + i] as i32;
             }
             dev.htod_sync_copy_into(&batch_indices_cpu[..bs], &mut batch_indices.slice_mut(0..bs))
                 .expect("Falha copiar indices");
 
-            // Gather: monta batch na GPU a partir de índices
-            let all_images_view = train_images_gpu.slice(0..train_images_gpu.len());
-            let indices_view = batch_indices.slice(0..bs);
-            launch_gather_images(
-                &kernels.gather_images,
-                &all_images_view,
-                &indices_view,
+            // Gather + Augmentation: um kernel fusionado
+            let seed = fastrand::u32(..);
+            launch_gather_and_augment(
+                &kernels.gather_and_augment,
+                &train_images_gpu.slice(0..train_images_gpu.len()),
+                &batch_indices.slice(0..bs),
                 &mut batch_input.slice_mut(0..bs * 784),
                 bs,
-            ).expect("Falha gather");
+                seed,
+                0.85,  // 85% chance de augmentation
+            ).expect("Falha gather+augment");
+
+            // Gather labels na GPU (sem copiar da CPU)
+            launch_gather_labels(
+                &kernels.gather_labels,
+                &train_labels_gpu.slice(0..train_labels_gpu.len()),
+                &batch_indices.slice(0..bs),
+                &mut batch_labels.slice_mut(0..bs),
+                bs,
+            ).expect("Falha gather labels");
 
             // Forward
             let dev_input = batch_input.slice(0..bs * 784);
@@ -100,17 +111,8 @@ fn main() {
             // Métricas na GPU
             let a_last = cache.a_offsets[mlp.dims.len()];
             let probs = cache.activations.slice(a_last..a_last + bs * 10);
-            
-            // Copiar labels CPU->GPU (apenas 512 inteiros, muito rápido)
-            let mut batch_labels_cpu = vec![0i32; bs];
-            for i in 0..bs {
-                batch_labels_cpu[i] = train_labels[indices[batch_start + i]] as i32;
-            }
-            let mut batch_labels = dev.alloc_zeros::<i32>(bs).expect("Falha alloc labels");
-            dev.htod_sync_copy_into(&batch_labels_cpu, &mut batch_labels.slice_mut(0..bs))
-                .expect("Falha copiar labels");
 
-            // Count correct na GPU
+            // Count correct
             dev.memset_zeros(&mut correct_gpu).expect("memset");
             launch_count_correct(
                 &kernels.count_correct,
@@ -122,7 +124,7 @@ fn main() {
             let correct_host = dev.dtoh_sync_copy(&correct_gpu.slice(0..1)).expect("dtoh");
             correct += correct_host[0] as usize;
 
-            // Compute loss na GPU
+            // Compute loss
             dev.memset_zeros(&mut loss_gpu).expect("memset");
             launch_compute_loss(
                 &kernels.compute_loss,
@@ -152,31 +154,39 @@ fn main() {
         let eval_start = Instant::now();
         let mut test_correct = 0usize;
         let mut test_loss = 0.0f32;
-        let eval_bs = 512;
+        let eval_bs = 1024;
         let mut batch_input_eval = dev.alloc_zeros::<f32>(eval_bs * 784).expect("Falha alloc eval");
         let mut batch_labels_eval = dev.alloc_zeros::<i32>(eval_bs).expect("Falha alloc eval labels");
-        let mut batch_labels_cpu_eval = vec![0i32; eval_bs];
 
         for chunk_start in (0..num_test).step_by(eval_bs) {
             let bs = (chunk_start + eval_bs).min(num_test) - chunk_start;
 
-            // Copiar imagens de teste para batch
+            // Índices sequenciais para teste
             for i in 0..bs {
-                let idx = chunk_start + i;
-                batch_indices_cpu[i] = idx as i32;
+                batch_indices_cpu[i] = (chunk_start + i) as i32;
             }
             dev.htod_sync_copy_into(&batch_indices_cpu[..bs], &mut batch_indices.slice_mut(0..bs))
                 .expect("Falha copiar indices eval");
 
-            let test_images_view = test_images_gpu.slice(0..test_images_gpu.len());
-            let indices_view = batch_indices.slice(0..bs);
-            launch_gather_images(
-                &kernels.gather_images,
-                &test_images_view,
-                &indices_view,
+            // Gather imagens de teste (sem augmentation: p_keep=0.0)
+            launch_gather_and_augment(
+                &kernels.gather_and_augment,
+                &test_images_gpu.slice(0..test_images_gpu.len()),
+                &batch_indices.slice(0..bs),
                 &mut batch_input_eval.slice_mut(0..bs * 784),
                 bs,
+                0,  // seed=0
+                0.0,  // p_keep=0.0 = nunca aplica augmentation
             ).expect("Falha gather eval");
+
+            // Gather labels
+            launch_gather_labels(
+                &kernels.gather_labels,
+                &test_labels_gpu.slice(0..test_labels_gpu.len()),
+                &batch_indices.slice(0..bs),
+                &mut batch_labels_eval.slice_mut(0..bs),
+                bs,
+            ).expect("Falha gather labels eval");
 
             let dev_input = batch_input_eval.slice(0..bs * 784);
             mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, &kernels, &blas)
@@ -184,13 +194,6 @@ fn main() {
 
             let a_last = eval_cache.a_offsets[mlp.dims.len()];
             let probs = eval_cache.activations.slice(a_last..a_last + bs * 10);
-
-            // Labels
-            for i in 0..bs {
-                batch_labels_cpu_eval[i] = test_labels[chunk_start + i] as i32;
-            }
-            dev.htod_sync_copy_into(&batch_labels_cpu_eval[..bs], &mut batch_labels_eval.slice_mut(0..bs))
-                .expect("Falha copiar labels eval");
 
             // Count correct
             dev.memset_zeros(&mut correct_gpu).expect("memset");

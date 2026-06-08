@@ -21,9 +21,10 @@ pub struct Kernels {
     pub softmax_crossentropy_backward: CudaFunction,
     pub adam_update: CudaFunction,
     pub sum_rows: CudaFunction,
-    pub gather_images: CudaFunction,
+    pub gather_and_augment: CudaFunction,
     pub count_correct: CudaFunction,
     pub compute_loss: CudaFunction,
+    pub gather_labels: CudaFunction,
 }
 
 impl Kernels {
@@ -36,14 +37,16 @@ impl Kernels {
         let softmax_crossentropy_backward = compile_kernel!(dev, "softmax_crossentropy_backward", SOFTMAX_CROSSENTROPY_BACKWARD);
         let adam_update                   = compile_kernel!(dev, "adam_update",                 ADAM_UPDATE);
         let sum_rows                      = compile_kernel!(dev, "sum_rows",                    SUM_ROWS);
-        let gather_images                 = compile_kernel!(dev, "gather_images",               GATHER_IMAGES);
+        let gather_and_augment            = compile_kernel!(dev, "gather_and_augment",          GATHER_AND_AUGMENT);
         let count_correct                 = compile_kernel!(dev, "count_correct",               COUNT_CORRECT);
         let compute_loss                  = compile_kernel!(dev, "compute_loss",                COMPUTE_LOSS);
+        let gather_labels                 = compile_kernel!(dev, "gather_labels",               GATHER_LABELS);
 
         Ok(Kernels {
             bias_add, relu, relu_backward, dropout, softmax,
             softmax_crossentropy_backward, adam_update, sum_rows,
-            gather_images, count_correct, compute_loss,
+            gather_and_augment, count_correct, compute_loss,
+            gather_labels,
         })
     }
 }
@@ -156,15 +159,29 @@ pub fn launch_sum_rows(
     Ok(())
 }
 
-pub fn launch_gather_images(
+pub fn launch_gather_and_augment(
     f: &CudaFunction,
     all_images: &CudaView<f32>,
     indices: &CudaView<i32>,
     batch: &mut CudaViewMut<f32>,
     batch_size: usize,
+    seed: u32,
+    p_keep: f32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
-    unsafe { f.clone().launch(cfg, (all_images, indices, batch, batch_size as i32))? };
+    unsafe { f.clone().launch(cfg, (all_images, indices, batch, batch_size as i32, seed, p_keep))? };
+    Ok(())
+}
+
+pub fn launch_gather_labels(
+    f: &CudaFunction,
+    all_labels: &CudaView<i32>,
+    indices: &CudaView<i32>,
+    batch: &mut CudaViewMut<i32>,
+    batch_size: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size);
+    unsafe { f.clone().launch(cfg, (all_labels, indices, batch, batch_size as i32))? };
     Ok(())
 }
 
@@ -307,15 +324,82 @@ extern "C" __global__ void sum_rows(const float* delta, float* db, int rows, int
 }
 "#;
 
-const GATHER_IMAGES: &str = r#"
-extern "C" __global__ void gather_images(const float* all_images, const int* indices, float* batch, int batch_size) {
+const GATHER_AND_AUGMENT: &str = r#"
+extern "C" __global__ void gather_and_augment(const float* all_images, const int* indices, float* batch, int batch_size, unsigned int seed, float p_keep) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batch_size * 784;
-    if (idx < total) {
-        int sample = idx / 784;
-        int pixel  = idx % 784;
-        int img_idx = indices[sample];
-        batch[idx] = __ldg(&all_images[img_idx * 784 + pixel]);
+    if (idx >= total) return;
+
+    int sample = idx / 784;
+    int pixel  = idx % 784;
+    int x = pixel % 28;
+    int y = pixel / 28;
+
+    int img_idx = __ldg(&indices[sample]);
+    float orig = __ldg(&all_images[img_idx * 784 + pixel]);
+
+    // RNG para decidir se aplica augmentation
+    unsigned int s1 = seed ^ (sample * 2654435761u);
+    s1 ^= s1 << 13; s1 ^= s1 >> 17; s1 ^= s1 << 5;
+    float r_keep = (s1 & 0x7FFFFFFFu) * (1.0f / 2147483647.0f);
+
+    if (r_keep > p_keep) {
+        batch[idx] = orig;
+        return;
+    }
+
+    // RNG para ângulo, tx, ty
+    unsigned int s2 = s1 ^ 0x9e3779b9u;
+    s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
+    float angle_deg = (s2 & 0x7FFFFFFFu) * (20.0f / 2147483647.0f) - 10.0f;
+
+    unsigned int s3 = s2 ^ 0x85ebca6bu;
+    s3 ^= s3 << 13; s3 ^= s3 >> 17; s3 ^= s3 << 5;
+    float tx = (s3 & 0x7FFFFFFFu) * (3.0f / 2147483647.0f) - 1.5f;
+
+    unsigned int s4 = s3 ^ 0xc2b2ae35u;
+    s4 ^= s4 << 13; s4 ^= s4 >> 17; s4 ^= s4 << 5;
+    float ty = (s4 & 0x7FFFFFFFu) * (3.0f / 2147483647.0f) - 1.5f;
+
+    float angle_rad = angle_deg * 3.14159265f / 180.0f;
+    float cos_a = cosf(angle_rad);
+    float sin_a = sinf(angle_rad);
+    float cx = 13.5f, cy = 13.5f;
+
+    float dx = x - cx;
+    float dy = y - cy;
+    float src_x = dx * cos_a + dy * sin_a - tx + cx;
+    float src_y = -dx * sin_a + dy * cos_a - ty + cy;
+
+    if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
+        int x0 = (int)floorf(src_x);
+        int y0 = (int)floorf(src_y);
+        int x1 = x0 + 1;
+        int y1 = y0 + 1;
+        float wx = src_x - x0;
+        float wy = src_y - y0;
+
+        float v00 = __ldg(&all_images[img_idx * 784 + y0 * 28 + x0]);
+        float v10 = __ldg(&all_images[img_idx * 784 + y0 * 28 + x1]);
+        float v01 = __ldg(&all_images[img_idx * 784 + y1 * 28 + x0]);
+        float v11 = __ldg(&all_images[img_idx * 784 + y1 * 28 + x1]);
+
+        batch[idx] = (1.0f - wx) * (1.0f - wy) * v00
+                    + wx * (1.0f - wy) * v10
+                    + (1.0f - wx) * wy * v01
+                    + wx * wy * v11;
+    } else {
+        batch[idx] = 0.0f;
+    }
+}
+"#;
+
+const GATHER_LABELS: &str = r#"
+extern "C" __global__ void gather_labels(const int* all_labels, const int* indices, int* batch, int batch_size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < batch_size) {
+        int idx = __ldg(&indices[i]);
+        batch[i] = __ldg(&all_labels[idx]);
     }
 }
 "#;
