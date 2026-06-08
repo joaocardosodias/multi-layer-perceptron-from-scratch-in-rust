@@ -3,8 +3,8 @@ import subprocess
 import re
 import os
 
-# Caminho do projeto
-PROJECT_DIR = "/home/cardoso/GitHub/multi-layer-perceptron-from-scratch-in-rust"
+# Caminho do projeto (relativo ao script)
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def run_training(max_lr, augment_p_keep, weight_decay, epochs, dropout_keep):
     """
