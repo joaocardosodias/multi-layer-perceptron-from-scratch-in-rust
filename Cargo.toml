@@ -3,12 +3,26 @@ name = "multi-layer-perceptron-from-scratch-in-rust"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "mlp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mlp-cpu"
+path = "src/cpu/main.rs"
+
+[[bin]]
+name = "mlp-gpu"
+path = "src/gpu/main.rs"
+
 [dependencies]
 rayon = "1.10"
 rand = "0.8"
 rand_distr = "0.4"
 cblas-sys = "0.3.0"
 intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"] }
+fastrand = "2"
+cudarc = { version = "0.11", features = ["cublas", "cuda-12020"] }
 
 [profile.release]
 opt-level = 3

@@ -1,17 +1,15 @@
-mod data;
 mod linalg;
-mod losses;
 mod network;
 mod optimizers;
 mod utils;
 
-use data::{load_images, load_labels};
-use losses::cross_entropy;
+use mlp::common::data::{load_images, load_labels};
+use mlp::common::losses::cross_entropy;
+use utils::*;
 use network::{BatchCache, Gradients, MLP};
 use optimizers::AdamState;
 use rayon::prelude::*;
 use std::time::Instant;
-use utils::*;
 use rand::Rng;
 
 

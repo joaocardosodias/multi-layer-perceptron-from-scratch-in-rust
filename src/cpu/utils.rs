@@ -1,5 +1,5 @@
 use crate::network::{BatchCache, MLP};
-use crate::losses::cross_entropy;
+use mlp::common::losses::cross_entropy;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand::Rng;
