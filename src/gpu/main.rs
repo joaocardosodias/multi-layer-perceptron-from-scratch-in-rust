@@ -19,8 +19,8 @@ fn main() {
     const BATCH_SIZE: usize = 256;
     const EPOCHS: usize = 300;
     const LABEL_SMOOTHING: f32 = 0.0;
-    const MAX_LR: f32 = 3e-3;
-    const AUGMENT_P_KEEP: f32 = 0.85;
+    const MAX_LR: f32 = 6e-3;
+    const AUGMENT_P_KEEP: f32 = 0.90;
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
