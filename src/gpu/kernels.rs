@@ -373,19 +373,14 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     float src_x = dx * cos_a + dy * sin_a - tx + cx;
     float src_y = -dx * sin_a + dy * cos_a - ty + cy;
 
-    // ==== ELASTIC DISTORTION (aproximado via smooth noise) ====
-    // Gerar offset aleatório correlacionado espacialmente
-    unsigned int sex = s1 ^ (x * 1664525u);
-    sex ^= sex << 13; sex ^= sex >> 17; sex ^= sex << 5;
-    float off_x = (sex & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
-
-    unsigned int sey = s1 ^ (y * 1103515245u);
-    sey ^= sey << 13; sey ^= sey >> 17; sey ^= sey << 5;
-    float off_y = (sey & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
-
-    // Aplicar offsets (alpha=36, sigma=5 aproximado - sem blur, usa maior amplitude)
-    src_x += off_x * 7.2f;
-    src_y += off_y * 7.2f;
+    // ==== JITTER (pequeno ruído por pixel, como CPU) ====
+    unsigned int sj = s1 ^ (pixel * 1103515245u);
+    sj ^= sj << 13; sj ^= sj >> 17; sj ^= sj << 5;
+    float jitter = (sj & 0x7FFFFFFFu) * (0.1f / 2147483647.0f) - 0.05f;
+    src_x += jitter;
+    src_y += jitter;
+    // Nota: elastic distortion precisa de gaussian blur (não implementado na GPU)
+    // Usando apenas affine + jitter por enquanto
 
     if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
         int x0 = (int)floorf(src_x);
