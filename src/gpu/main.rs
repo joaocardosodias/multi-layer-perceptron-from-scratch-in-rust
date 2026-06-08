@@ -15,6 +15,9 @@ use linalg::BlasHandle;
 use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
 
 fn main() {
+    const BATCH_SIZE: usize = 1024;
+    const EPOCHS: usize = 300;
+
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
 
@@ -36,12 +39,10 @@ fn main() {
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
     // 4. Buffers de batch e índices
-    let batch_size = 256;
-    let epochs = 300;
-    let mut batch_input = dev.alloc_zeros::<f32>(batch_size * 784).expect("Falha alloc batch");
-    let mut batch_labels = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc labels");
-    let mut batch_indices = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc indices");
-    let mut batch_indices_cpu = vec![0i32; batch_size];
+    let mut batch_input = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc batch");
+    let mut batch_labels = dev.alloc_zeros::<i32>(BATCH_SIZE).expect("Falha alloc labels");
+    let mut batch_indices = dev.alloc_zeros::<i32>(BATCH_SIZE).expect("Falha alloc indices");
+    let mut batch_indices_cpu = vec![0i32; BATCH_SIZE];
     let mut indices: Vec<usize> = (0..num_train).collect();
 
     // 5. Buffers para métricas na GPU
@@ -49,8 +50,8 @@ fn main() {
     let mut loss_gpu = dev.alloc_zeros::<f32>(1).expect("Falha alloc loss");
 
     // 6. Cache para treino e eval
-    let mut cache = BatchCache::new(&dev, &mlp.dims, batch_size).expect("Falha cache");
-    let mut eval_cache = BatchCache::new(&dev, &mlp.dims, batch_size).expect("Falha eval cache");
+    let mut cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha cache");
+    let mut eval_cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha eval cache");
 
     let mut adam = AdamState::new(&dev, &mlp).expect("Falha Adam");
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
@@ -59,12 +60,12 @@ fn main() {
     let mut best_test_acc = 0.0f32;
     let mut best_epoch = 0;
 
-    let num_batches = (num_train + batch_size - 1) / batch_size;
-    let total_steps = epochs * num_batches;
+    let num_batches = (num_train + BATCH_SIZE - 1) / BATCH_SIZE;
+    let total_steps = EPOCHS * num_batches;
     let max_lr = 3e-3;
     let mut scheduler = OneCycleLR::new(total_steps, max_lr);
 
-    for epoch in 0..epochs {
+    for epoch in 0..EPOCHS {
         let epoch_start = Instant::now();
         shuffle_indices(&mut indices);
 
@@ -72,8 +73,8 @@ fn main() {
         let mut correct = 0usize;
         let mut total = 0usize;
 
-        for batch_start in (0..num_train).step_by(batch_size) {
-            let bs = (batch_start + batch_size).min(num_train) - batch_start;
+        for batch_start in (0..num_train).step_by(BATCH_SIZE) {
+            let bs = (batch_start + BATCH_SIZE).min(num_train) - batch_start;
 
             // Copia índices CPU -> GPU (apenas 1024 ints)
             for i in 0..bs {
@@ -226,7 +227,7 @@ fn main() {
 
         println!(
             "Epoca {}/{} | Loss: {:.4} | Acc: {:.2}% | Test Acc: {:.2}% | Test Loss: {:.4}",
-            epoch + 1, epochs,
+            epoch + 1, EPOCHS,
             epoch_loss / total as f32,
             100.0 * correct as f32 / total as f32,
             100.0 * test_acc, test_loss
