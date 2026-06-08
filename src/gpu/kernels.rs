@@ -373,14 +373,27 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     float src_x = dx * cos_a + dy * sin_a - tx + cx;
     float src_y = -dx * sin_a + dy * cos_a - ty + cy;
 
-    // ==== JITTER (pequeno ruído por pixel, como CPU) ====
-    unsigned int sj = s1 ^ (pixel * 1103515245u);
-    sj ^= sj << 13; sj ^= sj >> 17; sj ^= sj << 5;
-    float jitter = (sj & 0x7FFFFFFFu) * (0.1f / 2147483647.0f) - 0.05f;
-    src_x += jitter;
-    src_y += jitter;
-    // Nota: elastic distortion precisa de gaussian blur (não implementado na GPU)
-    // Usando apenas affine + jitter por enquanto
+    // ==== ELASTIC DISTORTION (aproximado com box blur 3x3 no hash) ====
+    // Em vez de hash puro por pixel (sigma=0, destrutivo), 
+    // calculamos a média de uma vizinhança 3x3 para suavizar (aproxima sigma=5)
+    float sum_x = 0.0f, sum_y = 0.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int nx = x + dx;
+            int ny = y + dy;
+            unsigned int hs = s1 ^ ((nx + ny * 28) * 1664525u);
+            hs ^= hs << 13; hs ^= hs >> 17; hs ^= hs << 5;
+            sum_x += (hs & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+            unsigned int hs2 = s1 ^ ((nx + ny * 28) * 1103515245u);
+            hs2 ^= hs2 << 13; hs2 ^= hs2 >> 17; hs2 ^= hs2 << 5;
+            sum_y += (hs2 & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+        }
+    }
+    // Box blur 3x3 = 9 amostras, alpha=36 (4x o anterior que era 1.8)
+    src_x += (sum_x / 9.0f) * 3.6f;
+    src_y += (sum_y / 9.0f) * 3.6f;
+    // Nota: 3.6 = 36/10, pois o box blur 3x3 é mais suave que o gaussian blur 5x3 da CPU
+    // Se precisar de mais força, aumentar para 5.4 ou 7.2
 
     if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
         int x0 = (int)floorf(src_x);
