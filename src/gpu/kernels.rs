@@ -21,6 +21,9 @@ pub struct Kernels {
     pub softmax_crossentropy_backward: CudaFunction,
     pub adam_update: CudaFunction,
     pub sum_rows: CudaFunction,
+    pub gather_images: CudaFunction,
+    pub count_correct: CudaFunction,
+    pub compute_loss: CudaFunction,
 }
 
 impl Kernels {
@@ -33,10 +36,14 @@ impl Kernels {
         let softmax_crossentropy_backward = compile_kernel!(dev, "softmax_crossentropy_backward", SOFTMAX_CROSSENTROPY_BACKWARD);
         let adam_update                   = compile_kernel!(dev, "adam_update",                 ADAM_UPDATE);
         let sum_rows                      = compile_kernel!(dev, "sum_rows",                    SUM_ROWS);
+        let gather_images                 = compile_kernel!(dev, "gather_images",               GATHER_IMAGES);
+        let count_correct                 = compile_kernel!(dev, "count_correct",               COUNT_CORRECT);
+        let compute_loss                  = compile_kernel!(dev, "compute_loss",                COMPUTE_LOSS);
 
         Ok(Kernels {
             bias_add, relu, relu_backward, dropout, softmax,
             softmax_crossentropy_backward, adam_update, sum_rows,
+            gather_images, count_correct, compute_loss,
         })
     }
 }
@@ -149,6 +156,46 @@ pub fn launch_sum_rows(
     Ok(())
 }
 
+pub fn launch_gather_images(
+    f: &CudaFunction,
+    all_images: &CudaView<f32>,
+    indices: &CudaView<i32>,
+    batch: &mut CudaViewMut<f32>,
+    batch_size: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size * 784);
+    unsafe { f.clone().launch(cfg, (all_images, indices, batch, batch_size as i32))? };
+    Ok(())
+}
+
+pub fn launch_count_correct(
+    f: &CudaFunction,
+    probs: &CudaView<f32>,
+    labels: &CudaView<i32>,
+    correct: &mut CudaViewMut<i32>,
+    batch_size: usize,
+) -> Result<(), GpuError> {
+    let cfg = LaunchConfig {
+        block_dim: (1, 1, 1),
+        grid_dim:  (batch_size as u32, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    unsafe { f.clone().launch(cfg, (probs, labels, correct, batch_size as i32))? };
+    Ok(())
+}
+
+pub fn launch_compute_loss(
+    f: &CudaFunction,
+    probs: &CudaView<f32>,
+    labels: &CudaView<i32>,
+    loss: &mut CudaViewMut<f32>,
+    batch_size: usize, out_dim: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size);
+    unsafe { f.clone().launch(cfg, (probs, labels, loss, batch_size as i32, out_dim as i32))? };
+    Ok(())
+}
+
 const BIAS_ADD: &str = r#"
 extern "C" __global__ void bias_add(float* out, const float* b, int rows, int cols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -257,5 +304,45 @@ extern "C" __global__ void sum_rows(const float* delta, float* db, int rows, int
         __syncthreads();
     }
     if (tid == 0) db[col] += sdata[0] / (float)rows;
+}
+"#;
+
+const GATHER_IMAGES: &str = r#"
+extern "C" __global__ void gather_images(const float* all_images, const int* indices, float* batch, int batch_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * 784;
+    if (idx < total) {
+        int sample = idx / 784;
+        int pixel  = idx % 784;
+        int img_idx = indices[sample];
+        batch[idx] = __ldg(&all_images[img_idx * 784 + pixel]);
+    }
+}
+"#;
+
+const COUNT_CORRECT: &str = r#"
+extern "C" __global__ void count_correct(const float* probs, const int* labels, int* correct, int batch_size) {
+    int s = blockIdx.x;
+    if (s < batch_size) {
+        int best = 0;
+        float best_val = probs[s * 10];
+        for (int i = 1; i < 10; i++) {
+            float v = probs[s * 10 + i];
+            if (v > best_val) { best_val = v; best = i; }
+        }
+        if (best == labels[s]) atomicAdd(correct, 1);
+    }
+}
+"#;
+
+const COMPUTE_LOSS: &str = r#"
+extern "C" __global__ void compute_loss(const float* probs, const int* labels, float* loss, int batch_size, int out_dim) {
+    int s = blockIdx.x * blockDim.x + threadIdx.x;
+    if (s < batch_size) {
+        int target = labels[s];
+        float p = probs[s * out_dim + target];
+        p = fmaxf(p, 1e-10f);
+        atomicAdd(loss, -logf(p));
+    }
 }
 "#;
