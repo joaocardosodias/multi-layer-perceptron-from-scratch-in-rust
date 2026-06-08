@@ -17,13 +17,29 @@ use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_c
 
 fn main() {
     const BATCH_SIZE: usize = 256;
-    const EPOCHS: usize = 300;
     const LABEL_SMOOTHING: f32 = 0.0;
-    const MAX_LR: f32 = 6e-3;
-    const AUGMENT_P_KEEP: f32 = 0.90;
+    
+    // Ler hiperparâmetros das variáveis de ambiente (ou usar defaults)
+    let epochs = std::env::var("EPOCHS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300usize);
+    let max_lr = std::env::var("MAX_LR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6e-3f32);
+    let augment_p_keep = std::env::var("AUGMENT_P_KEEP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.90f32);
+    let dropout_keep = std::env::var("DROPOUT_KEEP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.9f32);
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
+    println!("Hiperparâmetros: epochs={}, max_lr={}, augment_p_keep={}, dropout_keep={}", epochs, max_lr, augment_p_keep, dropout_keep);
 
     // 1. Carrega dados na CPU
     let (train_images, num_train) = load_images("src/data/train-images-idx3-ubyte/train-images.idx3-ubyte");
@@ -66,10 +82,10 @@ fn main() {
     let mut best_epoch = 0;
 
     let num_batches = (num_train + BATCH_SIZE - 1) / BATCH_SIZE;
-    let total_steps = EPOCHS * num_batches;
-    let mut scheduler = OneCycleLR::new(total_steps, MAX_LR);
+    let total_steps = epochs * num_batches;
+    let mut scheduler = OneCycleLR::new(total_steps, max_lr);
 
-    for epoch in 0..EPOCHS {
+    for epoch in 0..epochs {
         let epoch_start = Instant::now();
         shuffle_indices(&mut indices);
 
@@ -78,7 +94,7 @@ fn main() {
         train_images_augmented = generate_augmented_dataset(
             &train_images,
             num_train,
-            AUGMENT_P_KEEP,
+            augment_p_keep,
             epoch as u64,
         );
         let aug_time = aug_start.elapsed();
@@ -123,7 +139,7 @@ fn main() {
 
             // Forward
             let dev_input = batch_input.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut cache, bs, true, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut cache, bs, true, &kernels, &blas, dropout_keep)
                 .expect("Falha forward");
 
             // Métricas na GPU
@@ -206,7 +222,7 @@ fn main() {
             ).expect("Falha gather labels eval");
 
             let dev_input = batch_input_eval.slice(0..bs * 784);
-            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, &kernels, &blas)
+            mlp.forward_batch(&dev_input, &mut eval_cache, bs, false, &kernels, &blas, 1.0)
                 .expect("Falha forward eval");
 
             let a_last = eval_cache.a_offsets[mlp.dims.len()];
@@ -243,7 +259,7 @@ fn main() {
 
         println!(
             "Epoca {}/{} | Loss: {:.4} | Acc: {:.2}% | Test Acc: {:.2}% | Test Loss: {:.4} | Aug: {:.2}s",
-            epoch + 1, EPOCHS,
+            epoch + 1, epochs,
             epoch_loss / total as f32,
             100.0 * correct as f32 / total as f32,
             100.0 * test_acc, test_loss,

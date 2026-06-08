@@ -135,6 +135,7 @@ impl MLP {
         is_training: bool,
         kernels: &Kernels,
         blas: &BlasHandle,
+        dropout_keep: f32,
     ) -> Result<(), GpuError> {
         for i in 0..self.dims.len() {
             let (rows, cols) = self.dims[i];
@@ -169,7 +170,7 @@ impl MLP {
                 launch_relu(&kernels.relu, &mut z_slice, &mut a_slice, bs * rows)?;
                 if is_training {
                     let seed = fastrand::u32(..);
-                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, 0.9, seed)?;
+                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, dropout_keep, seed)?;
                 }
             }
         }
