@@ -5,21 +5,22 @@ mod optimizers;
 mod utils;
 mod kernels;
 
-use cudarc::driver::{CudaDevice, CudaSlice, DeviceSlice};
+use cudarc::driver::{CudaDevice, DeviceSlice};
 use std::time::Instant;
 
 use mlp::common::data::{load_images, load_labels};
+use mlp::common::augment::generate_augmented_dataset;
 use network::{BatchCache, Gradients, MLP};
 use optimizers::{AdamState, OneCycleLR, adam_update};
 use linalg::BlasHandle;
-use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss, launch_generate_offset_fields, launch_gaussian_blur_h, launch_gaussian_blur_v, launch_apply_elastic_distortion};
+use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
 
 fn main() {
     const BATCH_SIZE: usize = 256;
     const EPOCHS: usize = 300;
     const LABEL_SMOOTHING: f32 = 0.0;
     const MAX_LR: f32 = 3e-3;
-    const AUGMENT_P_KEEP: f32 = 0.80;
+    const AUGMENT_P_KEEP: f32 = 0.85;
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
@@ -30,9 +31,7 @@ fn main() {
     let (test_images, num_test) = load_images("src/data/t10k-images-idx3-ubyte/t10k-images.idx3-ubyte");
     let test_labels = load_labels("src/data/t10k-labels-idx1-ubyte/t10k-labels.idx1-ubyte");
 
-    // 2. Envia tudo para GPU (uma vez só)
-    let train_images_gpu = dev.htod_sync_copy(&train_images).expect("Falha ao copiar imagens de treino");
-    let train_labels_gpu = dev.htod_sync_copy(&train_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de treino");
+    // 2. Envia dados de teste para GPU (uma vez só)
     let test_images_gpu = dev.htod_sync_copy(&test_images).expect("Falha ao copiar imagens de teste");
     let test_labels_gpu = dev.htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de teste");
 
@@ -59,25 +58,8 @@ fn main() {
     let mut adam = AdamState::new(&dev, &mlp).expect("Falha Adam");
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
-    // 7. Elastic distortion: buffers temporários e kernel gaussiano (exato como CPU)
-    const ELASTIC_ALPHA: f32 = 50.0;
-    const ELASTIC_SIGMA: f32 = 5.0;
-    let elastic_radius = (2.0 * ELASTIC_SIGMA).ceil() as usize;
-    let kernel_size = elastic_radius * 2 + 1;
-    let mut gaussian_kernel: Vec<f32> = vec![0.0; kernel_size];
-    let mut sum = 0.0f32;
-    for i in 0..kernel_size {
-        let x = i as f32 - elastic_radius as f32;
-        gaussian_kernel[i] = (-x * x / (2.0 * ELASTIC_SIGMA * ELASTIC_SIGMA)).exp();
-        sum += gaussian_kernel[i];
-    }
-    for k in &mut gaussian_kernel { *k /= sum; }
-    let gaussian_kernel_gpu = dev.htod_sync_copy(&gaussian_kernel).expect("Falha kernel gaussiano");
-
-    // Buffers para campos de offset (dx, dy) e temporário para blur
-    let mut dx_field = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc dx");
-    let mut dy_field = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc dy");
-    let mut blur_tmp = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc blur_tmp");
+    // 7. Buffer para dataset augmentado na CPU
+    let mut train_images_augmented = vec![0.0f32; num_train * 784];
 
     let total_start = Instant::now();
     let mut best_test_acc = 0.0f32;
@@ -91,6 +73,20 @@ fn main() {
         let epoch_start = Instant::now();
         shuffle_indices(&mut indices);
 
+        // Gera dataset augmentado na CPU (exatamente como CPU faz)
+        let aug_start = Instant::now();
+        train_images_augmented = generate_augmented_dataset(
+            &train_images,
+            num_train,
+            AUGMENT_P_KEEP,
+            epoch as u64,
+        );
+        let aug_time = aug_start.elapsed();
+
+        // Copia dataset augmentado para GPU
+        let train_images_gpu = dev.htod_sync_copy(&train_images_augmented).expect("Falha ao copiar augmented");
+        let train_labels_gpu = dev.htod_sync_copy(&train_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels");
+
         let mut epoch_loss = 0.0f32;
         let mut correct = 0usize;
         let mut total = 0usize;
@@ -98,84 +94,25 @@ fn main() {
         for batch_start in (0..num_train).step_by(BATCH_SIZE) {
             let bs = (batch_start + BATCH_SIZE).min(num_train) - batch_start;
 
-            // Copia índices CPU -> GPU (apenas 1024 ints)
+            // Copia índices CPU -> GPU
             for i in 0..bs {
                 batch_indices_cpu[i] = indices[batch_start + i] as i32;
             }
             dev.htod_sync_copy_into(&batch_indices_cpu[..bs], &mut batch_indices.slice_mut(0..bs))
                 .expect("Falha copiar indices");
 
-            // ==== ELASTIC DISTORTION (exato como CPU) ====
-            let seed = fastrand::u32(..);
+            // Copia batch augmentado da CPU para GPU
+            let mut batch_cpu = vec![0.0f32; bs * 784];
+            for i in 0..bs {
+                let idx = indices[batch_start + i];
+                batch_cpu[i * 784..(i + 1) * 784].copy_from_slice(
+                    &train_images_augmented[idx * 784..(idx + 1) * 784]
+                );
+            }
+            dev.htod_sync_copy_into(&batch_cpu, &mut batch_input.slice_mut(0..bs * 784))
+                .expect("Falha copiar batch");
 
-            // 1. Gerar campos de offset aleatórios
-            launch_generate_offset_fields(
-                &kernels.generate_offset_fields,
-                &mut dx_field.slice_mut(0..bs * 784),
-                &mut dy_field.slice_mut(0..bs * 784),
-                bs,
-                seed,
-            ).expect("Falha generate offsets");
-
-            // 2. Gaussian blur horizontal (dx)
-            launch_gaussian_blur_h(
-                &kernels.gaussian_blur_h,
-                &dx_field.slice(0..bs * 784),
-                &mut blur_tmp.slice_mut(0..bs * 784),
-                bs,
-                &gaussian_kernel_gpu.slice(0..kernel_size),
-                kernel_size,
-                elastic_radius,
-            ).expect("Falha blur h dx");
-
-            // 3. Gaussian blur vertical (dx)
-            launch_gaussian_blur_v(
-                &kernels.gaussian_blur_v,
-                &blur_tmp.slice(0..bs * 784),
-                &mut dx_field.slice_mut(0..bs * 784),
-                bs,
-                &gaussian_kernel_gpu.slice(0..kernel_size),
-                kernel_size,
-                elastic_radius,
-            ).expect("Falha blur v dx");
-
-            // 4. Gaussian blur horizontal (dy)
-            launch_gaussian_blur_h(
-                &kernels.gaussian_blur_h,
-                &dy_field.slice(0..bs * 784),
-                &mut blur_tmp.slice_mut(0..bs * 784),
-                bs,
-                &gaussian_kernel_gpu.slice(0..kernel_size),
-                kernel_size,
-                elastic_radius,
-            ).expect("Falha blur h dy");
-
-            // 5. Gaussian blur vertical (dy)
-            launch_gaussian_blur_v(
-                &kernels.gaussian_blur_v,
-                &blur_tmp.slice(0..bs * 784),
-                &mut dy_field.slice_mut(0..bs * 784),
-                bs,
-                &gaussian_kernel_gpu.slice(0..kernel_size),
-                kernel_size,
-                elastic_radius,
-            ).expect("Falha blur v dy");
-
-            // 6. Aplicar elastic distortion + affine
-            launch_apply_elastic_distortion(
-                &kernels.apply_elastic_distortion,
-                &train_images_gpu.slice(0..train_images_gpu.len()),
-                &batch_indices.slice(0..bs),
-                &dx_field.slice(0..bs * 784),
-                &dy_field.slice(0..bs * 784),
-                &mut batch_input.slice_mut(0..bs * 784),
-                bs,
-                seed,
-                AUGMENT_P_KEEP,
-                ELASTIC_ALPHA,
-            ).expect("Falha apply elastic");
-
-            // Gather labels na GPU (sem copiar da CPU)
+            // Gather labels na GPU
             launch_gather_labels(
                 &kernels.gather_labels,
                 &train_labels_gpu.slice(0..train_labels_gpu.len()),
@@ -248,15 +185,15 @@ fn main() {
             dev.htod_sync_copy_into(&batch_indices_cpu[..bs], &mut batch_indices.slice_mut(0..bs))
                 .expect("Falha copiar indices eval");
 
-            // Gather imagens de teste (sem augmentation: p_keep=0.0)
+            // Gather imagens de teste (sem augmentation)
             launch_gather_and_augment(
                 &kernels.gather_and_augment,
                 &test_images_gpu.slice(0..test_images_gpu.len()),
                 &batch_indices.slice(0..bs),
                 &mut batch_input_eval.slice_mut(0..bs * 784),
                 bs,
-                0,  // seed=0
-                0.0,  // p_keep=0.0 = nunca aplica augmentation
+                0,
+                0.0,
             ).expect("Falha gather eval");
 
             // Gather labels
@@ -305,11 +242,12 @@ fn main() {
         test_loss /= num_test as f32;
 
         println!(
-            "Epoca {}/{} | Loss: {:.4} | Acc: {:.2}% | Test Acc: {:.2}% | Test Loss: {:.4}",
+            "Epoca {}/{} | Loss: {:.4} | Acc: {:.2}% | Test Acc: {:.2}% | Test Loss: {:.4} | Aug: {:.2}s",
             epoch + 1, EPOCHS,
             epoch_loss / total as f32,
             100.0 * correct as f32 / total as f32,
-            100.0 * test_acc, test_loss
+            100.0 * test_acc, test_loss,
+            aug_time.as_secs_f64()
         );
         println!(
             "  Treino: {:.2}s | Avaliacao: {:.2}s",
