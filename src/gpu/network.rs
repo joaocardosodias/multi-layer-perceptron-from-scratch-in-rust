@@ -169,7 +169,7 @@ impl MLP {
                 launch_relu(&kernels.relu, &mut z_slice, &mut a_slice, bs * rows)?;
                 if is_training {
                     let seed = fastrand::u32(..);
-                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, 0.9, seed)?;
+                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, 0.8, seed)?;
                 }
             }
         }
@@ -185,6 +185,7 @@ impl MLP {
         bs: usize,
         kernels: &Kernels,
         blas: &BlasHandle,
+        label_smoothing: f32,
     ) -> Result<(), GpuError> {
         let num_layers = self.dims.len();
         let inv_bs = 1.0 / bs as f32;
@@ -199,7 +200,7 @@ impl MLP {
             launch_softmax_crossentropy_backward(
                 &kernels.softmax_crossentropy_backward,
                 &probs, &mut delta_out, &targets_view,
-                bs, out_dim,
+                bs, out_dim, label_smoothing,
             )?;
         }
 

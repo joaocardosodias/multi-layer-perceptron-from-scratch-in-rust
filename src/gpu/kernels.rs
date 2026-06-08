@@ -122,9 +122,10 @@ pub fn launch_softmax_crossentropy_backward(
     delta: &mut CudaViewMut<f32>,
     targets: &CudaView<i32>,
     bs: usize, out_dim: usize,
+    label_smoothing: f32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(bs * out_dim);
-    unsafe { f.clone().launch(cfg, (probs, delta, targets, bs as i32, out_dim as i32))? };
+    unsafe { f.clone().launch(cfg, (probs, delta, targets, bs as i32, out_dim as i32, label_smoothing))? };
     Ok(())
 }
 
@@ -276,12 +277,13 @@ extern "C" __global__ void softmax(const float* z, float* a, int rows, int cols)
 
 const SOFTMAX_CROSSENTROPY_BACKWARD: &str = r#"
 extern "C" __global__ void softmax_crossentropy_backward(
-        const float* probs, float* delta, const int* targets, int bs, int out_dim) {
+        const float* probs, float* delta, const int* targets, int bs, int out_dim, float label_smoothing) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < bs * out_dim) {
         int s = idx / out_dim;
         int r = idx % out_dim;
-        delta[idx] = __ldg(&probs[idx]) - (r == __ldg(&targets[s]) ? 1.0f : 0.0f);
+        float target_val = (r == __ldg(&targets[s])) ? (1.0f - label_smoothing) : (label_smoothing / (out_dim - 1));
+        delta[idx] = __ldg(&probs[idx]) - target_val;
     }
 }
 "#;

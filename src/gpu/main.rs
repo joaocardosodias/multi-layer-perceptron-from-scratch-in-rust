@@ -15,8 +15,10 @@ use linalg::BlasHandle;
 use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
 
 fn main() {
-    const BATCH_SIZE: usize = 256;
-    const EPOCHS: usize = 300;
+    const BATCH_SIZE: usize = 1024;
+    const EPOCHS: usize = 200;
+    const LABEL_SMOOTHING: f32 = 0.1;
+    const MAX_LR: f32 = 5e-3;
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
@@ -34,7 +36,7 @@ fn main() {
     let test_labels_gpu = dev.htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>()).expect("Falha ao copiar labels de teste");
 
     // 3. Cria MLP e kernels na GPU
-    let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
+    let mut mlp = MLP::new(&dev, &[784, 4096, 2048, 10]).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
@@ -62,8 +64,7 @@ fn main() {
 
     let num_batches = (num_train + BATCH_SIZE - 1) / BATCH_SIZE;
     let total_steps = EPOCHS * num_batches;
-    let max_lr = 3e-3;
-    let mut scheduler = OneCycleLR::new(total_steps, max_lr);
+    let mut scheduler = OneCycleLR::new(total_steps, MAX_LR);
 
     for epoch in 0..EPOCHS {
         let epoch_start = Instant::now();
@@ -92,7 +93,7 @@ fn main() {
                 &mut batch_input.slice_mut(0..bs * 784),
                 bs,
                 seed,
-                0.85,  // 85% chance de augmentation
+                0.95,  // 95% chance de augmentation
             ).expect("Falha gather+augment");
 
             // Gather labels na GPU (sem copiar da CPU)
@@ -140,7 +141,7 @@ fn main() {
 
             // Backward
             acc_grads.zero().expect("Falha zero grads");
-            mlp.backward_batch(&mut cache, &batch_labels.slice(0..bs), &mut acc_grads, bs, &kernels, &blas)
+            mlp.backward_batch(&mut cache, &batch_labels.slice(0..bs), &mut acc_grads, bs, &kernels, &blas, LABEL_SMOOTHING)
                 .expect("Falha backward");
 
             // Adam
