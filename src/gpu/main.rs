@@ -19,7 +19,7 @@ fn main() {
     const EPOCHS: usize = 300;
     const LABEL_SMOOTHING: f32 = 0.0;
     const MAX_LR: f32 = 3e-3;
-    const AUGMENT_P_KEEP: f32 = 0.85;
+    const AUGMENT_P_KEEP: f32 = 0.80;
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
@@ -60,7 +60,7 @@ fn main() {
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
     // 7. Elastic distortion: buffers temporários e kernel gaussiano (exato como CPU)
-    const ELASTIC_ALPHA: f32 = 36.0;
+    const ELASTIC_ALPHA: f32 = 40.0;
     const ELASTIC_SIGMA: f32 = 5.0;
     let elastic_radius = (2.0 * ELASTIC_SIGMA).ceil() as usize;
     let kernel_size = elastic_radius * 2 + 1;
