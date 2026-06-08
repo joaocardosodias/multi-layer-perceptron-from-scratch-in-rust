@@ -24,13 +24,13 @@ impl BlasHandle {
         c: &mut C,
     ) -> Result<(), GpuError> {
         let cfg = GemmConfig {
-            transa: cudarc::cublas::sys::cublasOperation_t::CUBLAS_OP_T,
-            transb: cudarc::cublas::sys::cublasOperation_t::CUBLAS_OP_T,
+            transa: cudarc::cublas::sys::cublasOperation_t::CUBLAS_OP_N,
+            transb: cudarc::cublas::sys::cublasOperation_t::CUBLAS_OP_N,
             m: n as i32,
             n: m as i32,
             k: k as i32,
             alpha,
-            lda: k as i32,
+            lda: n as i32,
             ldb: k as i32,
             beta,
             ldc: n as i32,
