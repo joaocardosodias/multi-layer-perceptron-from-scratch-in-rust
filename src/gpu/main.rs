@@ -12,7 +12,7 @@ use mlp::common::data::{load_images, load_labels};
 use network::{BatchCache, Gradients, MLP};
 use optimizers::{AdamState, OneCycleLR, adam_update};
 use linalg::BlasHandle;
-use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss};
+use kernels::{Kernels, launch_gather_and_augment, launch_gather_labels, launch_count_correct, launch_compute_loss, launch_generate_offset_fields, launch_gaussian_blur_h, launch_gaussian_blur_v, launch_apply_elastic_distortion};
 
 fn main() {
     const BATCH_SIZE: usize = 256;
@@ -59,6 +59,26 @@ fn main() {
     let mut adam = AdamState::new(&dev, &mlp).expect("Falha Adam");
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
+    // 7. Elastic distortion: buffers temporários e kernel gaussiano (exato como CPU)
+    const ELASTIC_ALPHA: f32 = 36.0;
+    const ELASTIC_SIGMA: f32 = 5.0;
+    let elastic_radius = (2.0 * ELASTIC_SIGMA).ceil() as usize;
+    let kernel_size = elastic_radius * 2 + 1;
+    let mut gaussian_kernel: Vec<f32> = vec![0.0; kernel_size];
+    let mut sum = 0.0f32;
+    for i in 0..kernel_size {
+        let x = i as f32 - elastic_radius as f32;
+        gaussian_kernel[i] = (-x * x / (2.0 * ELASTIC_SIGMA * ELASTIC_SIGMA)).exp();
+        sum += gaussian_kernel[i];
+    }
+    for k in &mut gaussian_kernel { *k /= sum; }
+    let gaussian_kernel_gpu = dev.htod_sync_copy(&gaussian_kernel).expect("Falha kernel gaussiano");
+
+    // Buffers para campos de offset (dx, dy) e temporário para blur
+    let mut dx_field = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc dx");
+    let mut dy_field = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc dy");
+    let mut blur_tmp = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc blur_tmp");
+
     let total_start = Instant::now();
     let mut best_test_acc = 0.0f32;
     let mut best_epoch = 0;
@@ -85,17 +105,75 @@ fn main() {
             dev.htod_sync_copy_into(&batch_indices_cpu[..bs], &mut batch_indices.slice_mut(0..bs))
                 .expect("Falha copiar indices");
 
-            // Gather + Augmentation: um kernel fusionado
+            // ==== ELASTIC DISTORTION (exato como CPU) ====
             let seed = fastrand::u32(..);
-            launch_gather_and_augment(
-                &kernels.gather_and_augment,
+
+            // 1. Gerar campos de offset aleatórios
+            launch_generate_offset_fields(
+                &kernels.generate_offset_fields,
+                &mut dx_field.slice_mut(0..bs * 784),
+                &mut dy_field.slice_mut(0..bs * 784),
+                bs,
+                seed,
+            ).expect("Falha generate offsets");
+
+            // 2. Gaussian blur horizontal (dx)
+            launch_gaussian_blur_h(
+                &kernels.gaussian_blur_h,
+                &dx_field.slice(0..bs * 784),
+                &mut blur_tmp.slice_mut(0..bs * 784),
+                bs,
+                &gaussian_kernel_gpu.slice(0..kernel_size),
+                kernel_size,
+                elastic_radius,
+            ).expect("Falha blur h dx");
+
+            // 3. Gaussian blur vertical (dx)
+            launch_gaussian_blur_v(
+                &kernels.gaussian_blur_v,
+                &blur_tmp.slice(0..bs * 784),
+                &mut dx_field.slice_mut(0..bs * 784),
+                bs,
+                &gaussian_kernel_gpu.slice(0..kernel_size),
+                kernel_size,
+                elastic_radius,
+            ).expect("Falha blur v dx");
+
+            // 4. Gaussian blur horizontal (dy)
+            launch_gaussian_blur_h(
+                &kernels.gaussian_blur_h,
+                &dy_field.slice(0..bs * 784),
+                &mut blur_tmp.slice_mut(0..bs * 784),
+                bs,
+                &gaussian_kernel_gpu.slice(0..kernel_size),
+                kernel_size,
+                elastic_radius,
+            ).expect("Falha blur h dy");
+
+            // 5. Gaussian blur vertical (dy)
+            launch_gaussian_blur_v(
+                &kernels.gaussian_blur_v,
+                &blur_tmp.slice(0..bs * 784),
+                &mut dy_field.slice_mut(0..bs * 784),
+                bs,
+                &gaussian_kernel_gpu.slice(0..kernel_size),
+                kernel_size,
+                elastic_radius,
+            ).expect("Falha blur v dy");
+
+            // 6. Aplicar elastic distortion + affine
+            launch_apply_elastic_distortion(
+                &kernels.apply_elastic_distortion,
                 &train_images_gpu.slice(0..train_images_gpu.len()),
                 &batch_indices.slice(0..bs),
+                &dx_field.slice(0..bs * 784),
+                &dy_field.slice(0..bs * 784),
                 &mut batch_input.slice_mut(0..bs * 784),
                 bs,
                 seed,
-                AUGMENT_P_KEEP,  // 85% chance de augmentation
-            ).expect("Falha gather+augment");
+                AUGMENT_P_KEEP,
+                ELASTIC_ALPHA,
+            ).expect("Falha apply elastic");
 
             // Gather labels na GPU (sem copiar da CPU)
             launch_gather_labels(

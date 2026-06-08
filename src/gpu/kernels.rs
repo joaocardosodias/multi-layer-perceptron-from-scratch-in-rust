@@ -25,6 +25,10 @@ pub struct Kernels {
     pub count_correct: CudaFunction,
     pub compute_loss: CudaFunction,
     pub gather_labels: CudaFunction,
+    pub generate_offset_fields: CudaFunction,
+    pub gaussian_blur_h: CudaFunction,
+    pub gaussian_blur_v: CudaFunction,
+    pub apply_elastic_distortion: CudaFunction,
 }
 
 impl Kernels {
@@ -41,12 +45,17 @@ impl Kernels {
         let count_correct                 = compile_kernel!(dev, "count_correct",               COUNT_CORRECT);
         let compute_loss                  = compile_kernel!(dev, "compute_loss",                COMPUTE_LOSS);
         let gather_labels                 = compile_kernel!(dev, "gather_labels",               GATHER_LABELS);
+        let generate_offset_fields        = compile_kernel!(dev, "generate_offset_fields",      GENERATE_OFFSET_FIELDS);
+        let gaussian_blur_h               = compile_kernel!(dev, "gaussian_blur_h",             GAUSSIAN_BLUR_H);
+        let gaussian_blur_v               = compile_kernel!(dev, "gaussian_blur_v",             GAUSSIAN_BLUR_V);
+        let apply_elastic_distortion      = compile_kernel!(dev, "apply_elastic_distortion",    APPLY_ELASTIC_DISTORTION);
 
         Ok(Kernels {
             bias_add, relu, relu_backward, dropout, softmax,
             softmax_crossentropy_backward, adam_update, sum_rows,
             gather_and_augment, count_correct, compute_loss,
-            gather_labels,
+            gather_labels, generate_offset_fields, gaussian_blur_h,
+            gaussian_blur_v, apply_elastic_distortion,
         })
     }
 }
@@ -171,6 +180,63 @@ pub fn launch_gather_and_augment(
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
     unsafe { f.clone().launch(cfg, (all_images, indices, batch, batch_size as i32, seed, p_keep))? };
+    Ok(())
+}
+
+pub fn launch_generate_offset_fields(
+    f: &CudaFunction,
+    dx: &mut CudaViewMut<f32>,
+    dy: &mut CudaViewMut<f32>,
+    batch_size: usize,
+    seed: u32,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size * 784);
+    unsafe { f.clone().launch(cfg, (dx, dy, batch_size as i32, seed))? };
+    Ok(())
+}
+
+pub fn launch_gaussian_blur_h(
+    f: &CudaFunction,
+    input: &CudaView<f32>,
+    output: &mut CudaViewMut<f32>,
+    batch_size: usize,
+    kernel: &CudaView<f32>,
+    kernel_size: usize,
+    radius: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size * 784);
+    unsafe { f.clone().launch(cfg, (input, output, batch_size as i32, kernel, kernel_size as i32, radius as i32))? };
+    Ok(())
+}
+
+pub fn launch_gaussian_blur_v(
+    f: &CudaFunction,
+    input: &CudaView<f32>,
+    output: &mut CudaViewMut<f32>,
+    batch_size: usize,
+    kernel: &CudaView<f32>,
+    kernel_size: usize,
+    radius: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size * 784);
+    unsafe { f.clone().launch(cfg, (input, output, batch_size as i32, kernel, kernel_size as i32, radius as i32))? };
+    Ok(())
+}
+
+pub fn launch_apply_elastic_distortion(
+    f: &CudaFunction,
+    all_images: &CudaView<f32>,
+    indices: &CudaView<i32>,
+    dx: &CudaView<f32>,
+    dy: &CudaView<f32>,
+    batch: &mut CudaViewMut<f32>,
+    batch_size: usize,
+    seed: u32,
+    p_keep: f32,
+    alpha: f32,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(batch_size * 784);
+    unsafe { f.clone().launch(cfg, (all_images, indices, dx, dy, batch, batch_size as i32, seed, p_keep, alpha))? };
     Ok(())
 }
 
@@ -451,6 +517,145 @@ extern "C" __global__ void compute_loss(const float* probs, const int* labels, f
         float p = probs[s * out_dim + target];
         p = fmaxf(p, 1e-10f);
         atomicAdd(loss, -logf(p));
+    }
+}
+"#;
+
+const GENERATE_OFFSET_FIELDS: &str = r#"
+extern "C" __global__ void generate_offset_fields(float* dx, float* dy, int batch_size, unsigned int seed) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * 784;
+    if (idx >= total) return;
+
+    int sample = idx / 784;
+    int pixel = idx % 784;
+
+    unsigned int s1 = seed ^ (sample * 2654435761u);
+    s1 ^= s1 << 13; s1 ^= s1 >> 17; s1 ^= s1 << 5;
+    unsigned int s2 = s1 ^ (pixel * 1103515245u);
+    s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
+    dx[idx] = (s2 & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+
+    unsigned int s3 = s1 ^ (pixel * 1664525u);
+    s3 ^= s3 << 13; s3 ^= s3 >> 17; s3 ^= s3 << 5;
+    dy[idx] = (s3 & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+}
+"#;
+
+const GAUSSIAN_BLUR_H: &str = r#"
+extern "C" __global__ void gaussian_blur_h(const float* input, float* output, int batch_size, const float* kernel, int kernel_size, int radius) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * 784;
+    if (idx >= total) return;
+
+    int sample = idx / 784;
+    int pixel = idx % 784;
+    int x = pixel % 28;
+    int y = pixel / 28;
+
+    float sum = 0.0f;
+    for (int ki = 0; ki < kernel_size; ki++) {
+        int xi = x + ki - radius;
+        if (xi < 0) xi = 0;
+        if (xi > 27) xi = 27;
+        sum += kernel[ki] * input[sample * 784 + y * 28 + xi];
+    }
+    output[idx] = sum;
+}
+"#;
+
+const GAUSSIAN_BLUR_V: &str = r#"
+extern "C" __global__ void gaussian_blur_v(const float* input, float* output, int batch_size, const float* kernel, int kernel_size, int radius) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * 784;
+    if (idx >= total) return;
+
+    int sample = idx / 784;
+    int pixel = idx % 784;
+    int x = pixel % 28;
+    int y = pixel / 28;
+
+    float sum = 0.0f;
+    for (int ki = 0; ki < kernel_size; ki++) {
+        int yi = y + ki - radius;
+        if (yi < 0) yi = 0;
+        if (yi > 27) yi = 27;
+        sum += kernel[ki] * input[sample * 784 + yi * 28 + x];
+    }
+    output[idx] = sum;
+}
+"#;
+
+const APPLY_ELASTIC_DISTORTION: &str = r#"
+extern "C" __global__ void apply_elastic_distortion(const float* all_images, const int* indices, const float* dx, const float* dy, float* batch, int batch_size, unsigned int seed, float p_keep, float alpha) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * 784;
+    if (idx >= total) return;
+
+    int sample = idx / 784;
+    int pixel = idx % 784;
+    int x = pixel % 28;
+    int y = pixel / 28;
+
+    int img_idx = __ldg(&indices[sample]);
+    float orig = __ldg(&all_images[img_idx * 784 + pixel]);
+
+    // RNG para decidir se aplica augmentation
+    unsigned int s1 = seed ^ (sample * 2654435761u);
+    s1 ^= s1 << 13; s1 ^= s1 >> 17; s1 ^= s1 << 5;
+    float r_keep = (s1 & 0x7FFFFFFFu) * (1.0f / 2147483647.0f);
+
+    if (r_keep > p_keep) {
+        batch[idx] = orig;
+        return;
+    }
+
+    // ==== AFFINE (gerado por amostra, como CPU) ====
+    unsigned int s2 = s1 ^ 0x9e3779b9u;
+    s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
+    float angle_deg = (s2 & 0x7FFFFFFFu) * (30.0f / 2147483647.0f) - 15.0f;
+
+    unsigned int s3 = s2 ^ 0x85ebca6bu;
+    s3 ^= s3 << 13; s3 ^= s3 >> 17; s3 ^= s3 << 5;
+    float tx = (s3 & 0x7FFFFFFFu) * (5.0f / 2147483647.0f) - 2.5f;
+
+    unsigned int s4 = s3 ^ 0xc2b2ae35u;
+    s4 ^= s4 << 13; s4 ^= s4 >> 17; s4 ^= s4 << 5;
+    float ty = (s4 & 0x7FFFFFFFu) * (5.0f / 2147483647.0f) - 2.5f;
+
+    float angle_rad = angle_deg * 3.14159265f / 180.0f;
+    float cos_a = cosf(angle_rad);
+    float sin_a = sinf(angle_rad);
+    float cx = 13.5f, cy = 13.5f;
+
+    float dx_val = x - cx;
+    float dy_val = y - cy;
+    float src_x = dx_val * cos_a + dy_val * sin_a - tx + cx;
+    float src_y = -dx_val * sin_a + dy_val * cos_a - ty + cy;
+
+    // ==== ELASTIC DISTORTION (exato como CPU) ====
+    src_x += alpha * dx[sample * 784 + pixel];
+    src_y += alpha * dy[sample * 784 + pixel];
+
+    if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
+        int x0 = (int)floorf(src_x);
+        int y0 = (int)floorf(src_y);
+        int x1 = x0 + 1;
+        int y1 = y0 + 1;
+        float wx = src_x - x0;
+        float wy = src_y - y0;
+
+        float v00 = __ldg(&all_images[img_idx * 784 + y0 * 28 + x0]);
+        float v10 = __ldg(&all_images[img_idx * 784 + y0 * 28 + x1]);
+        float v01 = __ldg(&all_images[img_idx * 784 + y1 * 28 + x0]);
+        float v11 = __ldg(&all_images[img_idx * 784 + y1 * 28 + x1]);
+
+        batch[idx] = (1.0f - wx) * (1.0f - wy) * v00
+                    + wx * (1.0f - wy) * v10
+                    + (1.0f - wx) * wy * v01
+                    + wx * wy * v11;
+    } else {
+        batch[idx] = 0.0f;
     }
 }
 "#;
