@@ -348,7 +348,7 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
         return;
     }
 
-    // RNG para ângulo, tx, ty
+    // ==== AFFINE (igual a CPU) ====
     unsigned int s2 = s1 ^ 0x9e3779b9u;
     s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
     float angle_deg = (s2 & 0x7FFFFFFFu) * (20.0f / 2147483647.0f) - 10.0f;
@@ -370,6 +370,20 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     float dy = y - cy;
     float src_x = dx * cos_a + dy * sin_a - tx + cx;
     float src_y = -dx * sin_a + dy * cos_a - ty + cy;
+
+    // ==== ELASTIC DISTORTION (aproximado via smooth noise) ====
+    // Gerar offset aleatório correlacionado espacialmente
+    unsigned int sex = s1 ^ (x * 1664525u);
+    sex ^= sex << 13; sex ^= sex >> 17; sex ^= sex << 5;
+    float off_x = (sex & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+
+    unsigned int sey = s1 ^ (y * 1103515245u);
+    sey ^= sey << 13; sey ^= sey >> 17; sey ^= sey << 5;
+    float off_y = (sey & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
+
+    // Aplicar offsets (alpha=36, sigma=5 aproximado)
+    src_x += off_x * 1.8f;
+    src_y += off_y * 1.8f;
 
     if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
         int x0 = (int)floorf(src_x);
