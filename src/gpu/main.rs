@@ -37,7 +37,7 @@ fn main() {
 
     // 4. Buffers de batch e índices
     let batch_size = 1024;
-    let epochs = 1000;
+    let epochs = 300;
     let mut batch_input = dev.alloc_zeros::<f32>(batch_size * 784).expect("Falha alloc batch");
     let mut batch_labels = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc labels");
     let mut batch_indices = dev.alloc_zeros::<i32>(batch_size).expect("Falha alloc indices");
