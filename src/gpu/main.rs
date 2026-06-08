@@ -157,12 +157,11 @@ fn main() {
         let eval_start = Instant::now();
         let mut test_correct = 0usize;
         let mut test_loss = 0.0f32;
-        let eval_bs = 1024;
-        let mut batch_input_eval = dev.alloc_zeros::<f32>(eval_bs * 784).expect("Falha alloc eval");
-        let mut batch_labels_eval = dev.alloc_zeros::<i32>(eval_bs).expect("Falha alloc eval labels");
+        let mut batch_input_eval = dev.alloc_zeros::<f32>(BATCH_SIZE * 784).expect("Falha alloc eval");
+        let mut batch_labels_eval = dev.alloc_zeros::<i32>(BATCH_SIZE).expect("Falha alloc eval labels");
 
-        for chunk_start in (0..num_test).step_by(eval_bs) {
-            let bs = (chunk_start + eval_bs).min(num_test) - chunk_start;
+        for chunk_start in (0..num_test).step_by(BATCH_SIZE) {
+            let bs = (chunk_start + BATCH_SIZE).min(num_test) - chunk_start;
 
             // Índices sequenciais para teste
             for i in 0..bs {
