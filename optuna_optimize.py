@@ -74,23 +74,28 @@ if __name__ == "__main__":
         load_if_exists=True
     )
     
-    # Rodar 144 trials (6h / 150s = ~144 runs)
-    n_trials = 144
-    print(f"\n=== Iniciando {n_trials} trials ===")
-    print(f"Tempo estimado: ~{n_trials * 150 / 3600:.1f} horas")
+    # Rodar indefinidamente até interromper manualmente
+    n_trials = None
+    print(f"\n=== Iniciando busca infinita ===")
+    print(f"Ctrl+C para parar quando quiser!")
     
-    # Callback para salvar progresso a cada 10 trials
+    # Callback para salvar progresso a cada trial
     def save_progress(study, trial):
-        if trial.number % 10 == 0:
-            print(f"\n--- Progresso: {trial.number}/{n_trials} trials ---")
-            print(f"Melhor até agora: {study.best_value:.2f}%")
-            # Salvar resultados parciais
-            with open("optuna_results_partial.txt", "w") as f:
-                f.write(f"Melhor acurácia: {study.best_value:.2f}%\n")
-                f.write(f"Melhores hiperparâmetros: {study.best_params}\n")
-                f.write(f"Total de trials: {len(study.trials)}\n")
+        print(f"\n--- Trial {trial.number} ---")
+        print(f"Melhor até agora: {study.best_value:.2f}%")
+        # Salvar resultados parciais
+        with open("optuna_results_partial.txt", "w") as f:
+            f.write(f"Melhor acurácia: {study.best_value:.2f}%\n")
+            f.write(f"Melhores hiperparâmetros: {study.best_params}\n")
+            f.write(f"Total de trials: {len(study.trials)}\n")
+            f.write(f"\nÚltimo trial ({trial.number}): {trial.value:.2f}%\n")
     
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True, callbacks=[save_progress])
+    try:
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=True, callbacks=[save_progress])
+    except KeyboardInterrupt:
+        print("\n\n=== Interrompido pelo usuário ===")
+    except Exception as e:
+        print(f"\n\n=== Erro: {e} ===")
     
     # Print resultados
     print("\n=== MELHOR RESULTADO ===")
