@@ -1,41 +1,61 @@
-# Multi-Layer Perceptron (MLP) do zero em Rust - MNIST
+# Multi-Layer Perceptron (MLP) do zero em Rust — MNIST
 
-Este repositório contém a implementação de uma rede neural Multi-Layer Perceptron (MLP) escrita em Rust, sem uso de bibliotecas de Machine Learning.
+> Implementação de uma rede neural MLP escrita **100% em Rust**, sem uso de bibliotecas de Machine Learning.
+
+---
 
 ## Como rodar
 
-1. Rust instalado (`cargo`)
-2. Dados do MNIST em `src/data/`
-3. Executar em modo release:
-   ```bash
-   cargo run --release
-   ```
+| # | Passo |
+|---|-------|
+| 1 | Rust instalado (`cargo`) |
+| 2 | Dados do MNIST em `src/data/` |
+| 3 | Executar em modo release: |
 
-*(Hardware: Dell Latitude, Arch Linux, Intel Core i5-1345u, 16GB RAM, sem GPU)*
+```bash
+cargo run --release
+```
+
+> _(Hardware: Dell Latitude, Arch Linux, Intel Core i5-1345u, 16GB RAM, sem GPU)_
 
 ---
 
 ## Arquitetura
 
-- **Topologia:** `[784, 2048, 1024, 10]`
-- **Ativações:** `ReLU` (ocultas) e `Softmax` (saída)
-- **Otimizador:** Adam com `OneCycleLR`
-- **Data Augmentation:** rotação, translação, distorção elástica, blur
+| Componente | Detalhe |
+|:---|:---|
+| **Topologia** | `[784, 2048, 1024, 10]` |
+| **Ativações** | `ReLU` (ocultas) e `Softmax` (saída) |
+| **Otimizador** | Adam com `OneCycleLR` |
+| **Data Augmentation** | rotação, translação, distorção elástica, blur |
 
 ---
 
 ## Resultados
 
-- **Acurácia Final:** **99.58%** no conjunto de teste
-- **Tempo total:** ~38 minutos para 300 épocas
+### CPU — Dell Latitude (Intel Core i5-1345u)
+
+| Métrica | Valor |
+|:---|:---|
+| **Acurácia Final** | **99.56%** no conjunto de teste |
+| **Tempo total** | ~38 minutos para 300 épocas |
+
+### GPU — Laboratório (RTX A4000 via SSH)
+
+| Métrica | Valor |
+|:---|:---|
+| **Acurácia Final** | **99.63%** no conjunto de teste |
+| **Tempo total** | ~19.3 minutos para 2500 épocas |
+| **Acesso** | GPU do laboratório via SSH, usando CUDA para paralelização massiva |
 
 ### Comparativo de experimentos
 
-| Experimento | Épocas | Tempo | Acurácia | Notas |
-| :--- | :--- | :--- | :--- | :--- |
-| **V1 (Ingênua)** | 25 | **23 min 13 s** | 97.09% | `Vec<Vec<T>>`, loops escalares, alocações excessivas |
-| **V2 (Otimizada)**| 25 | **8.74 s** | 97.09% | Flat memory, AVX2, Rayon, f32, cache blocking. Ganho de **157x** |
-| **V3 (SOTA)** | 300 | ~38 min | **99.58%** | Data Augmentation, Adam + OneCycleLR |
+| Experimento | Hardware | Épocas | Tempo | Acurácia | Notas |
+|:---|:---|:---:|:---|:---:|:---|
+| **V1 (Ingênua)** | CPU | 25 | **23 min 13 s** | 97.09% | `Vec<Vec<T>>`, loops escalares, alocações excessivas |
+| **V2 (Otimizada)** | CPU | 25 | **8.74 s** | 97.09% | Flat memory, AVX2, Rayon, f32, cache blocking. Ganho de **157x** |
+| **V3 (SOTA)** | CPU | 300 | ~**12.25 min** | **99.60%** | Data Augmentation, Adam + OneCycleLR |
+| **V4 (GPU)** | GPU | 300 | **~84 s** | **99.63%** | CUDA + cuBLAS, gradient accumulation, mesmo augmentation da CPU |
 
 ---
 
@@ -45,9 +65,9 @@ Este repositório contém a implementação de uma rede neural Multi-Layer Perce
 
 A primeira coisa que eu precisei resolver antes de qualquer outra coisa foi carregar os dados do MNIST. O formato IDX é um formato binário relativamente simples, mas tem uma estrutura específica que precisa ser respeitada rigorosamente, senão os dados saem completamente errados. O arquivo começa com um magic number de 4 bytes que identifica o tipo de dado que está sendo lido (se são imagens ou se são labels), seguido pelo número total de itens no arquivo, número de linhas por imagem e número de colunas por imagem. Todos esses valores estão armazenados em big-endian, o que significa que o byte mais significativo vem primeiro, e é preciso usar `u32::from_be_bytes` para converter corretamente.
 
-Para o arquivo de imagens, o magic number é 2051. Para o arquivo de labels, é 2049. Se o magic number que eu lesse não batesse com esses valores, significava que o arquivo estava corrompido ou que eu estava lendo o arquivo errado. Depois do header, que tem 16 bytes no caso das imagens (4 bytes para o magic number, 4 para o número de imagens, 4 para as linhas e 4 para as colunas) ou 8 bytes no caso dos labels (magic number + número de labels), vêm os dados brutos propriamente ditos. No caso das imagens, é um byte por pixel, com valores variando de 0 a 255, onde 0 representa preto absoluto e 255 representa branco absoluto.
+Para o arquivo de imagens, o magic number é `2051`. Para o arquivo de labels, é `2049`. Se o magic number que eu lesse não batesse com esses valores, significava que o arquivo estava corrompido ou que eu estava lendo o arquivo errado. Depois do header, que tem 16 bytes no caso das imagens (4 bytes para o magic number, 4 para o número de imagens, 4 para as linhas e 4 para as colunas) ou 8 bytes no caso dos labels (magic number + número de labels), vêm os dados brutos propriamente ditos. No caso das imagens, é um byte por pixel, com valores variando de `0` a `255`, onde `0` representa preto absoluto e `255` representa branco absoluto.
 
-Eu implementei o parsing lendo o arquivo inteiro de uma vez num buffer `Vec<u8>`, verificando o magic number com `u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]])`, e depois extraindo as dimensões das posições seguintes no buffer. Cada imagem de 28×28 pixels foi achatada num vetor linear de 784 floats, e cada pixel foi normalizado dividindo por 255.0 para ficar no intervalo [0, 1]. Essa normalização é importante porque mantém os valores de input numa faixa consistente, o que ajuda na estabilidade numérica durante o treinamento. Os labels foram lidos diretamente como `usize`, já que são inteiros simples de 0 a 9 representando o dígito que cada imagem corresponde.
+Eu implementei o parsing lendo o arquivo inteiro de uma vez num buffer `Vec<u8>`, verificando o magic number com `u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]])`, e depois extraindo as dimensões das posições seguintes no buffer. Cada imagem de 28×28 pixels foi achatada num vetor linear de 784 floats, e cada pixel foi normalizado dividindo por `255.0` para ficar no intervalo `[0, 1]`. Essa normalização é importante porque mantém os valores de input numa faixa consistente, o que ajuda na estabilidade numérica durante o treinamento. Os labels foram lidos diretamente como `usize`, já que são inteiros simples de 0 a 9 representando o dígito que cada imagem corresponde.
 
 Essa parte de carregamento de dados foi tranquila, sendo basicamente leitura binária e conversão de tipos, sem muita complexidade. Mas foi importante validar tudo cedo, porque se os dados estivessem sendo lidos errado, nada ia funcionar depois e eu ia ficar debugando coisas que não tinham problema.
 
@@ -77,9 +97,9 @@ Tive que pesquisar e implementar a **He Initialization** (ou inicialização de 
 
 ### Primeiro resultado funcional
 
-Na minha primeira versão, eu já tinha conseguido bater a meta da disciplina (>= 92% de acurácia). Na verdade, já na terceira época de um treinamento das 25 épocas eu já havia batido os 92%. Eu poderia perfeitamente ter parado por ali e entregue o projeto, pois os requisitos já estavam cumpridos com folga. A rede funcionava, aprendia, e com uma acurácia muito acima do mínimo exigido.
+Na minha primeira versão, eu já tinha conseguido bater a meta da disciplina (**>= 92%** de acurácia). Na verdade, já na terceira época de um treinamento das 25 épocas eu já havia batido os 92%. Eu poderia perfeitamente ter parado por ali e entregue o projeto, pois os requisitos já estavam cumpridos com folga. A rede funcionava, aprendia, e com uma acurácia muito acima do mínimo exigido.
 
-Porém, como um grande fã de Rust, tinha algo que me incomodava profundamente: a velocidade. O tempo de treino: 23 minutos e 13 segundos.
+Porém, como um grande fã de Rust, tinha algo que me incomodava profundamente: a velocidade. O tempo de treino: **23 minutos e 13 segundos**.
 
 ![Treinamento Inicial - 23 Minutos](assets/Screenshot_2026-06-05-204438.png)
 
@@ -93,11 +113,11 @@ Foi aí que comecei minha busca incessante por performance.
 
 Para quem só programou em Python na vida, a forma como a memória e a CPU funcionam pode parecer invisível, mas quando você desce para o baixo nível (C/Rust), a arquitetura da máquina dita as regras do jogo.
 
-A primeira mudança que eu fiz foi abandonar os vetores dentro de vetores e criar um único vetor gigante e contínuo, o que chamam de *flat memory*. Passei a acessar as linhas e colunas através de uma fórmula matemática simples: `índice = y * largura + x`. Como a memória agora estava enfileirada perfeitamente, o processador conseguia engolir blocos inteiros de dados de uma vez, ao invés de ficar pulando de um endereço aleatório para outro na RAM.
+A primeira mudança que eu fiz foi abandonar os vetores dentro de vetores e criar um único vetor gigante e contínuo, o que chamam de _flat memory_. Passei a acessar as linhas e colunas através de uma fórmula matemática simples: `índice = y * largura + x`. Como a memória agora estava enfileirada perfeitamente, o processador conseguia engolir blocos inteiros de dados de uma vez, ao invés de ficar pulando de um endereço aleatório para outro na RAM.
 
-O motivo técnico por trás disso é o seguinte: a CPU não lê um byte por vez da memória RAM. Ela lê blocos de 64 bytes chamados cache lines e coloca no cache L1, que é uma memória interna minúscula mas absurdamente rápida. Se o próximo acesso estiver dentro da mesma cache line, é um cache hit, já que o dado já está lá e o acesso custa aproximadamente 1 ciclo de clock. Se estiver em outro endereço aleatório da RAM, é um cache miss, exigindo que a CPU espere aproximadamente 100 ciclos para o dado chegar da RAM. Com `Vec<Vec<f64>>`, as linhas da matriz estavam em endereços aleatórios, causando cache misses constantes. Com flat memory, tudo estava sequencial, e o prefetcher da CPU conseguia prever os acessos corretamente.
+> **O motivo técnico por trás disso:** a CPU não lê um byte por vez da memória RAM. Ela lê blocos de 64 bytes chamados **cache lines** e coloca no cache L1, que é uma memória interna minúscula mas absurdamente rápida. Se o próximo acesso estiver dentro da mesma cache line, é um **cache hit**, já que o dado já está lá e o acesso custa aproximadamente 1 ciclo de clock. Se estiver em outro endereço aleatório da RAM, é um **cache miss**, exigindo que a CPU espere aproximadamente 100 ciclos para o dado chegar da RAM. Com `Vec<Vec<f64>>`, as linhas da matriz estavam em endereços aleatórios, causando cache misses constantes. Com flat memory, tudo estava sequencial, e o prefetcher da CPU conseguia prever os acessos corretamente.
 
-Inclusive, eu fui além do prefetcher automático. No loop de avaliação, implementei o conceito de *Software Prefetching* com a instrução intrínseca `_mm_prefetch`. Eu literalmente programava a CPU para ir buscar a imagem *seguinte* na RAM e deixá-la na cache L1 antes mesmo de terminar de processar a imagem atual. Ocultar essa latência de memória fez um diferencial absurdo.
+Inclusive, eu fui além do prefetcher automático. No loop de avaliação, implementei o conceito de _Software Prefetching_ com a instrução intrínseca `_mm_prefetch`. Eu literalmente programava a CPU para ir buscar a imagem _seguinte_ na RAM e deixá-la na cache L1 antes mesmo de terminar de processar a imagem atual. Ocultar essa latência de memória fez um diferencial absurdo.
 
 Curiosamente, essa ideia me lembrou muito um conteúdo que eu estava estudando enquanto fazia meu mini-kernel em Rust: nos computadores antigos, os registradores de 16-bits da Intel só conseguiam endereçar 64KB de RAM. Para resolver isso, eles criaram um sistema indireto de segmentação que simulava um registrador de 20-bits, alcançando até 4GB de memória. Foi exatamente dessa lógica de endereçamento inventado que lembrei ao fazer a minha flat memory. Sei que não tem nada a ver diretamente (um é sobre limitação de bits de endereçamento e o outro é sobre localidade de cache), mas achei legal mencionar porque foi uma conexão que fiz na hora e que me deu confiança de que estava no caminho certo.
 
@@ -107,23 +127,25 @@ Outra otimização que eu fiz foi em relação ao heap, que é onde os vetores d
 
 Isso acontece porque o `Vec` em Rust funciona de forma similar ao `ArrayList` do Java ou ao `vector` do C++: ele começa com uma capacidade pequena e vai dobrando de tamanho conforme enche. Toda vez que a capacidade se esgota, o allocator do sistema operacional precisa alocar um novo bloco de memória com o dobro do tamanho, copiar todos os dados existentes pro novo bloco (uma operação `memcpy`), e liberar o bloco antigo. Isso acontecia milhares e milhares de vezes durante o treino, e cada realocação significava tempo de CPU gasto copiando dados ao invés de calculando gradientes.
 
-Foi aí que eu usei a ideia de pré-criar os vetores com o tamanho exato que eu iria precisar. Dessa forma, eu já deixava um espaço exato e reservado no heap do que iria precisar, liberando o processador de ter que ficar realocando toda hora. Criei uma struct `BatchCache` que armazena todos os buffers intermediários (pré-ativações, ativações e deltas) com os tamanhos calculados matematicamente antes do treino começar. Durante o treino, os buffers são reutilizados via `copy_from_slice` e sobrescrita direta. Zero alocações durante o treinamento.
+Foi aí que eu usei a ideia de pré-criar os vetores com o tamanho exato que eu iria precisar. Dessa forma, eu já deixava um espaço exato e reservado no heap do que iria precisar, liberando o processador de ter que ficar realocando toda hora. Criei uma struct `BatchCache` que armazena todos os buffers intermediários (pré-ativações, ativações e deltas) com os tamanhos calculados matematicamente antes do treino começar. Durante o treino, os buffers são reutilizados via `copy_from_slice` e sobrescrita direta. **Zero alocações durante o treinamento.**
 
 ### SIMD: Single Instruction, Multiple Data
 
-Uma das otimizações mais legais que eu fiz foi em relação a algo que aprendi na minha busca por performance: o SIMD (*Single Instruction, Multiple Data*).
+Uma das otimizações mais legais que eu fiz foi em relação a algo que aprendi na minha busca por performance: o SIMD (_Single Instruction, Multiple Data_).
 
 Resumindo de forma bem prática: ao invés de eu fazer várias operações de soma sequenciais, tipo:
+
 ```
 add r1, r2 => r3
 add r3, r4 => r5
 add r5, r6 => r7
 ```
-Onde cada instrução processa um par de números por vez, eu pego todos os números e coloco num registrador especial de 256 bits, e executo uma única instrução para somar tudo de uma vez. O nome é autoexplicativo: uma única instrução, múltiplos dados.
 
-No meu código, usei os intrinsics AVX2 (`_mm256_*`) para processar 8 floats por instrução nos loops de bias + ReLU e no SGD update. Por exemplo, no loop de ReLU, ao invés de fazer `if val > 0.0 { val } else { 0.0 }` para cada elemento individualmente, eu carrego 8 elementos num registrador, comparo todos com zero de uma vez usando `_mm256_max_ps`, e escrevo os 8 resultados de volta na memória. Isso substitui 8 iterações de um loop `for` por uma única instrução de CPU.
+Onde cada instrução processa um par de números por vez, eu pego todos os números e coloco num registrador especial de 256 bits, e executo uma única instrução para somar tudo de uma vez. O nome é autoexplicativo: **uma única instrução, múltiplos dados**.
 
-Outra coisa absurda do SIMD que aproveitei foi o FMA (*Fused Multiply-Add*). Em vez de fazer uma multiplicação e depois uma adição (duas operações separadas nas contas do update), eu usei a instrução `_mm256_fmadd_ps`. Ela faz a multiplicação e a adição simultaneamente, no mesmo exato ciclo de clock do processador. Além de ser instantâneo, evita perda de precisão e erros de arredondamento no ponto flutuante.
+No meu código, usei os intrinsics AVX2 (`_mm256_*`) para processar **8 floats por instrução** nos loops de bias + ReLU e no SGD update. Por exemplo, no loop de ReLU, ao invés de fazer `if val > 0.0 { val } else { 0.0 }` para cada elemento individualmente, eu carrego 8 elementos num registrador, comparo todos com zero de uma vez usando `_mm256_max_ps`, e escrevo os 8 resultados de volta na memória. Isso substitui 8 iterações de um loop `for` por uma única instrução de CPU.
+
+Outra coisa absurda do SIMD que aproveitei foi o **FMA** (_Fused Multiply-Add_). Em vez de fazer uma multiplicação e depois uma adição (duas operações separadas nas contas do update), eu usei a instrução `_mm256_fmadd_ps`. Ela faz a multiplicação e a adição simultaneamente, no mesmo exato ciclo de clock do processador. Além de ser instantâneo, evita perda de precisão e erros de arredondamento no ponto flutuante.
 
 ### GEMM e a integração com C (cblas-sys)
 
@@ -131,7 +153,7 @@ Além do SIMD nos loops manuais, o maior gargalo no treinamento de qualquer rede
 
 O processo que elas usam é de quebrar a multiplicação de uma matriz gigante em fragmentos tão pequenos que seja possível otimizar para usar a memória cache L1 para guardar os valores intermediários. O cache L1 é uma memória interna minúscula da CPU (tipicamente 32KB), mas absurdamente rápida comparada com a RAM. Quando os dados cabem inteiros no L1, a CPU não precisa esperar a RAM, pois ela pega tudo do cache e calcula sem nunca parar. Isso faz uma diferença brutal, especialmente quando você está fazendo centenas de milhares de multiplicações de matrizes durante o treino.
 
-Além do cache blocking (ou tiling), essas bibliotecas usam packing buffers (reorganizam os dados antes de computar para garantir acesso sequencial à memória), micro-kernels vetorizados (usam instruções SIMD internamente para processar múltiplos elementos por instrução), e paralelização multi-thread (dividem o trabalho entre os núcleos do processador). Implementar tudo isso do zero em Rust seria um gigantesco projeto por si só. Então, eu decidi descer ainda mais o nível: utilizei a crate `cblas-sys`. Ela faz uma ponte FFI (*Foreign Function Interface*) direto para as bibliotecas C do sistema (como OpenBLAS ou o próprio Intel MKL instalado na máquina). Com isso, eu pude chamar a função brutíssima `cblas_sgemm` do C diretamente no meu código Rust usando o bloco `unsafe`.
+Além do **cache blocking** (ou tiling), essas bibliotecas usam **packing buffers** (reorganizam os dados antes de computar para garantir acesso sequencial à memória), **micro-kernels vetorizados** (usam instruções SIMD internamente para processar múltiplos elementos por instrução), e **paralelização multi-thread** (dividem o trabalho entre os núcleos do processador). Implementar tudo isso do zero em Rust seria um gigantesco projeto por si só. Então, eu decidi descer ainda mais o nível: utilizei a crate `cblas-sys`. Ela faz uma ponte FFI (_Foreign Function Interface_) direto para as bibliotecas C do sistema (como OpenBLAS ou o próprio Intel MKL instalado na máquina). Com isso, eu pude chamar a função brutíssima `cblas_sgemm` do C diretamente no meu código Rust usando o bloco `unsafe`.
 
 ### Iteradores, Rayon e unsafe
 
@@ -143,7 +165,7 @@ Usei também do bloco `unsafe` do Rust para algumas operações de otimizações
 
 ### f64 → f32: quantização
 
-Fiz alguns testes e vi que `f64` tinha um comportamento praticamente igual ao `f32` durante o treinamento da rede neural. Ou seja, as  casas decimais a mais  de precisão do `f64` eram meio que inúteis para os gradientes, já que o ruído intrínseco do SGD (devido à amostragem aleatória de batches) é ordens de magnitude maior que o erro de arredondamento do `f32`. Ter 15 casas decimais de precisão ao invés de 7 não trazia benefício prático nenhum.
+Fiz alguns testes e vi que `f64` tinha um comportamento praticamente igual ao `f32` durante o treinamento da rede neural. Ou seja, as casas decimais a mais de precisão do `f64` eram meio que inúteis para os gradientes, já que o ruído intrínseco do SGD (devido à amostragem aleatória de batches) é ordens de magnitude maior que o erro de arredondamento do `f32`. Ter 15 casas decimais de precisão ao invés de 7 não trazia benefício prático nenhum.
 
 Isso otimizou muito, ainda mais por conta do SIMD: como o registrador AVX2 é de 256 bits, com `f64` (que ocupa 64 bits cada) eu só conseguia colocar 4 floats por vez. Agora com `f32` (que ocupa 32 bits cada), eu posso colocar até 8 floats, meio que duplicando a velocidade de fazer contas. Além disso, `f32` ocupa metade da memória, o que significa que cabe o dobro de dados no cache L1, reduzindo ainda mais os cache misses.
 
@@ -159,30 +181,56 @@ Isso foi muito importante, porque um dos limitantes para eu alcançar maiores ta
 
 ### Busca pela acurácia máxima
 
-Eu procurei o recorde mundial de MNIST usando MLP puro. Em um artigo da Universidade de Tokyo de 2015(https://arxiv.org/pdf/1505.03229), eles alcançaram 99.74% de acurácia usando uma rede massiva com técnicas avançadas de regularização. Procurei repetir os passos deles e usei coisas parecidas.
+Eu procurei o recorde mundial de MNIST usando MLP puro. Em um artigo da Universidade de Tokyo de 2015 ([link](https://arxiv.org/pdf/1505.03229)), eles alcançaram **99.74%** de acurácia usando uma rede massiva com técnicas avançadas de regularização. Procurei repetir os passos deles e usei coisas parecidas.
 
-Usei como otimizador o Adam (ou melhor, o **AdamW**). Eu extraí a penalidade L2 da fração de momento e apliquei o *Weight Decay* diretamente no passo de update dos pesos, o que melhora consideravelmente a capacidade da rede de generalizar. Junto com ele, usei o OneCycleLR como scheduler, para mudar o learning rate dinamicamente em tempos diferentes do treinamento, que começa baixo, sobe até um pico e depois decai suavemente. E para evitar overfitting numa rede tão grande, adicionei **Inverted Dropout** (também operando incrivelmente rápido via máscaras SIMD), onde 10% dos neurônios eram desativados no treino, mas os neurônios sobreviventes recebiam um *scaling* matemático compensatório para não onerar a performance da inferência depois.
+Usei como otimizador o Adam (ou melhor, o **AdamW**). Eu extraí a penalidade L2 da fração de momento e apliquei o _Weight Decay_ diretamente no passo de update dos pesos, o que melhora consideravelmente a capacidade da rede de generalizar. Junto com ele, usei o OneCycleLR como scheduler, para mudar o learning rate dinamicamente em tempos diferentes do treinamento, que começa baixo, sobe até um pico e depois decai suavemente. E para evitar overfitting numa rede tão grande, adicionei **Inverted Dropout** (também operando incrivelmente rápido via máscaras SIMD), onde 10% dos neurônios eram desativados no treino, mas os neurônios sobreviventes recebiam um _scaling_ matemático compensatório para não onerar a performance da inferência depois.
 
-Além disso, usei algo que achei muito interessante: o Data Augmentation. Resumindo com uma analogia: imagina que você é um aluno e tem uma prova para fazer na semana, e você tem que fazer exercícios para aprender. Se você aprende resolvendo exercícios fáceis, você não tem muito esforço, porém você não consegue resolver os exercícios difíceis quando eles aparecem na prova. Porém, se você treinar aprendendo a resolver exercícios difíceis, você vai ter mais esforço durante o estudo, porém vai saber os exercícios fáceis de letra na hora da prova.
+Além disso, usei algo que achei muito interessante: o **Data Augmentation**. Resumindo com uma analogia:
+
+> _Imagina que você é um aluno e tem uma prova para fazer na semana, e você tem que fazer exercícios para aprender. Se você aprende resolvendo exercícios fáceis, você não tem muito esforço, porém você não consegue resolver os exercícios difíceis quando eles aparecem na prova. Porém, se você treinar aprendendo a resolver exercícios difíceis, você vai ter mais esforço durante o estudo, porém vai saber os exercícios fáceis de letra na hora da prova._
 
 Foi isso que eu fiz. Peguei as imagens de treino e modifiquei elas de forma pesada: desfoquei, rotacionei, translacionei, apliquei distorção elástica, tudo para que o modelo tivesse que se esforçar para aprender o mais difícil. O grande desafio técnico aqui foi que rotacionar matrizes ou aplicar ondas elásticas nos pixels criava "serrilhados" bizarros se eu apenas movesse as posições inteiras. Para deixar as imagens realistas, implementei cálculos de **Interpolação Bilinear**, onde a cor do novo pixel é fundida proporcionalmente usando frações numéricas dos quatro vizinhos ao redor dele.
 
 Na hora de testar, eu coloco a imagem limpa, sem nenhuma modificação. Dessa forma, ele já vai ter aprendido a resolver os difíceis, fazendo com que os fáceis ele acerte mais. Igual ao aluno que estudou com exercícios difíceis e vai tirar de letra a prova de matemática.
 
-Um detalhe muito legal é que isso era perfeitamente visível nos logs: nas últimas épocas do treinamento, a acurácia de treino chegava a ser *menor* que a acurácia de teste. Como as imagens de treino estavam todas deformadas e difíceis, a rede naturalmente errava mais. Mas quando chegava a hora do teste (a "prova" com imagens limpas e normais), a acurácia disparava para cima, provando na prática que o sofrimento do modelo estava dando resultado.
+Um detalhe muito legal é que isso era perfeitamente visível nos logs: nas últimas épocas do treinamento, a acurácia de treino chegava a ser _menor_ que a acurácia de teste. Como as imagens de treino estavam todas deformadas e difíceis, a rede naturalmente errava mais. Mas quando chegava a hora do teste (a "prova" com imagens limpas e normais), a acurácia disparava para cima, provando na prática que o sofrimento do modelo estava dando resultado.
 
 Para aguentar a complexidade do Data Augmentation, escalei a rede para `[784, 2048, 1024, 10]`, contando com 2048 neurônios na primeira camada oculta. Uma rede pequena não teria capacidade suficiente para aprender com imagens tão distorcidas.
 
-Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.60%**, bem próximo do recorde mundial de 99.74%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
+Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.58%**, bem próximo do recorde mundial de 99.74%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
 
-![Resultado Final - Acurácia 99.60%](assets/Screenshot_2026-06-09-121114.png)
+![Resultado Final - Acurácia 99.58%](assets/Screenshot_2026-06-06-174033.png)
 
 O tempo total dessas 300 épocas foi de 38 minutos. Agora pense: se eu não tivesse feito as otimizações, seriam 23 minutos para cada 25 épocas. Calculando para 300 épocas, daria algo em torno de 4,6 horas. E imagine se eu fizesse na porcaria do Python (sem PyTorch, usando só NumPy, sem BLAS otimizado), daria mais de um dia com certeza.
 
-Tudo isso graças à otimização do código em Rust. Fiz tudo para extrair o máximo da minha maquina: um Dell Latitude com Arch Linux, Intel Core i5-1345u com 16GB de RAM, sem GPU. Se eu tivesse um PC com GPU... bom, aí a história seria outra.
+Tudo isso graças à otimização do código em Rust. Fiz tudo para extrair o máximo da minha maquina: um Dell Latitude com Arch Linux, Intel Core i5-1345u com 16GB de RAM, sem GPU.
+
+### GPU: CUDA via SSH no Laboratório
+
+Consegui acesso via SSH a um PC do laboratório com uma **RTX A4000** (Ampere, Compute Capability 8.6). O desafio agora era reescrever o código para usar CUDA, mantendo a mesma arquitetura e os mesmos hiperparâmetros da versão CPU.
+
+A implementação GPU usou:
+
+| Componente | Detalhe |
+|:---|:---|
+| **cuBLAS** | Multiplicação de matrizes (equivalente ao MKL na CPU) |
+| **Kernels CUDA** | Customizados para ReLU, Softmax, Dropout, Bias Add, Adam Update |
+| **Gradient Accumulation** | Acumular gradientes de 8 batches antes de aplicar Adam (igual ao CPU) |
+| **Data Augmentation** | Mesmo código da CPU (`common/augment.rs`), transferido para GPU |
+| **RNG** | `StdRng`/ChaCha20, garantindo augmentation idêntico ao da CPU |
+
+O resultado foi impressionante: **300 épocas em ~84 segundos** (vs 38 minutos na CPU). Um ganho de **~27x** de velocidade!
+
+E com mais épocas sendo viáveis graças à velocidade, consegui alcançar **99.63%** de acurácia no conjunto de teste, superando a versão CPU (99.58%) e chegando ainda mais perto do recorde mundial de 99.74%.
+
+![Resultado GPU - Acurácia 99.63%](assets/Screenshot_2026-06-09-142640.png)
+
+Isso mostra o poder de ter acesso a hardware melhor: com a GPU, pude rodar muito mais épocas em muito menos tempo, e a acurácia subiu naturalmente. O código GPU mantém a mesma arquitetura `[784, 2048, 1024, 10]`, os mesmos hiperparâmetros (`LR=3e-3`, `dropout=0.9`, `weight_decay=1e-4`) e o mesmo data augmentation da CPU. A única diferença é o hardware e a paralelização via CUDA.
 
 ### Limitações
 
-Lembrando que fiz otimizações extremas focadas em arquitetura x86_64 Intel, usando intrinsics AVX2 (`_mm256_*`) que são específicos desses processadores. Se você tentar rodar em AMD ou Mac (Apple Silicon, arquitetura ARM), provavelmente o desempenho vai ser bem pior, ou talvez nem rode. rsrs
+> Otimizações extremas focadas em arquitetura **x86_64 Intel**, usando intrinsics AVX2 (`_mm256_*`) que são específicos desses processadores. Se você tentar rodar em AMD ou Mac (Apple Silicon, arquitetura ARM), provavelmente o desempenho vai ser bem pior, ou talvez nem rode. rsrs
+>
+> A versão GPU requer uma GPU NVIDIA com suporte a CUDA e a crate `cudarc` compilada.
 
-No futuro, se eu fosse refazer, equilibraria melhor a balança entre otimização bruta e portabilidade cruzada de hardware. Mas pro aprendizado? Descer até o nível de registrador e entender como a CPU realmente funciona foi a melhor decisão que eu tomei nesse projeto.
+No futuro, se eu fosse refazer, equilibraria melhor a balança entre otimização bruta e portabilidade cruzada de hardware. Mas pro aprendizado? **Descer até o nível de registrador e entender como a CPU e a GPU realmente funcionam foi a melhor decisão que eu tomei nesse projeto.**

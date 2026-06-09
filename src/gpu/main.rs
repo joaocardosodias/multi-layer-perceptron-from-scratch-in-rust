@@ -20,7 +20,7 @@ use optimizers::{AdamState, OneCycleLR, adam_update};
 
 fn main() {
     const BATCH_SIZE: usize = 256;
-    const EPOCHS: usize = 300;
+    const EPOCHS: usize = 2500;
     const LABEL_SMOOTHING: f32 = 0.0;
     const MAX_LR: f32 = 3e-3;
     const AUGMENT_P_KEEP: f32 = 0.85;
