@@ -43,11 +43,11 @@ def run_training(max_lr, augment_p_keep, weight_decay, epochs, dropout_keep):
         return 0.0, 0
 
 def objective(trial):
-    # Sugerir hiperparâmetros
-    max_lr = trial.suggest_float("max_lr", 1e-3, 5e-3, log=True)
-    augment_p_keep = trial.suggest_float("augment_p_keep", 0.75, 0.90)
-    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True)
-    dropout_keep = trial.suggest_float("dropout_keep", 0.85, 0.95)
+    # Refinar busca em torno dos melhores valores encontrados
+    max_lr = trial.suggest_float("max_lr", 8e-4, 2e-3, log=True)
+    augment_p_keep = trial.suggest_float("augment_p_keep", 0.85, 0.92)
+    weight_decay = trial.suggest_float("weight_decay", 1e-4, 1e-3, log=True)
+    dropout_keep = trial.suggest_float("dropout_keep", 0.92, 0.96)
     
     print(f"\n=== Trial {trial.number} ===")
     print(f"max_lr={max_lr:.6f}, augment_p_keep={augment_p_keep:.2f}, weight_decay={weight_decay:.6f}, dropout_keep={dropout_keep:.2f}")
@@ -56,7 +56,7 @@ def objective(trial):
         max_lr=max_lr,
         augment_p_keep=augment_p_keep,
         weight_decay=weight_decay,
-        epochs=300,  # Fixo para velocidade
+        epochs=300,
         dropout_keep=dropout_keep
     )
     
@@ -74,8 +74,8 @@ if __name__ == "__main__":
         load_if_exists=True
     )
     
-    # Rodar 300 trials (14h / 150s = ~336 runs)
-    n_trials = 300
+    # Rodar 144 trials (6h / 150s = ~144 runs)
+    n_trials = 144
     print(f"\n=== Iniciando {n_trials} trials ===")
     print(f"Tempo estimado: ~{n_trials * 150 / 3600:.1f} horas")
     

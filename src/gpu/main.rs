@@ -29,15 +29,15 @@ fn main() {
     let max_lr = std::env::var("MAX_LR")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(6e-3f32);
+        .unwrap_or(1.2e-3f32);
     let augment_p_keep = std::env::var("AUGMENT_P_KEEP")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.90f32);
+        .unwrap_or(0.88f32);
     let dropout_keep = std::env::var("DROPOUT_KEEP")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.9f32);
+        .unwrap_or(0.94f32);
 
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
