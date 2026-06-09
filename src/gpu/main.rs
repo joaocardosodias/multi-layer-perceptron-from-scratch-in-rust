@@ -75,7 +75,9 @@ fn main() {
     let mut best_epoch = 0;
 
     let num_batches = (num_train + BATCH_SIZE - 1) / BATCH_SIZE;
-    let total_steps = EPOCHS * num_batches;
+    let grad_accum = 8usize;
+    let num_super_chunks = (num_batches + grad_accum - 1) / grad_accum;
+    let total_steps = EPOCHS * num_super_chunks;
     let mut scheduler = OneCycleLR::new(total_steps, MAX_LR);
 
     for epoch in 0..EPOCHS {
@@ -97,6 +99,10 @@ fn main() {
         let mut epoch_loss = 0.0f32;
         let mut correct = 0usize;
         let mut total = 0usize;
+        let mut batch_num = 0usize;
+        let grad_accum = 8usize;
+
+        acc_grads.zero().expect("Falha zero grads");
 
         for batch_start in (0..num_train).step_by(BATCH_SIZE) {
             let bs = (batch_start + BATCH_SIZE).min(num_train) - batch_start;
@@ -169,7 +175,6 @@ fn main() {
             epoch_loss += loss_host[0];
             total += bs;
 
-            acc_grads.zero().expect("Falha zero grads");
             mlp.backward_batch(
                 &mut cache,
                 &batch_labels.slice(0..bs),
@@ -181,9 +186,13 @@ fn main() {
             )
             .expect("Falha backward");
 
-            let step_lr = scheduler.step();
-            adam_update(&mut mlp, &mut acc_grads, &mut adam, step_lr, &kernels)
-                .expect("Falha adam");
+            batch_num += 1;
+            if batch_num % grad_accum == 0 || batch_start + bs >= num_train {
+                let step_lr = scheduler.step();
+                adam_update(&mut mlp, &mut acc_grads, &mut adam, step_lr, &kernels)
+                    .expect("Falha adam");
+                acc_grads.zero().expect("Falha zero grads");
+            }
         }
 
         let train_time = epoch_start.elapsed();

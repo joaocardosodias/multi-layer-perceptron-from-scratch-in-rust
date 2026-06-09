@@ -247,7 +247,7 @@ impl MLP {
             let mut dw = acc_grads
                 .dw
                 .slice_mut(acc_grads.w_offsets[num_layers - 1]..);
-            blas.gemm_ta(rows, bs, cols, inv_bs, &delta, &a_prev, 0.0, &mut dw)?;
+            blas.gemm_ta(rows, bs, cols, inv_bs, &delta, &a_prev, 1.0, &mut dw)?;
         }
         {
             let mut delta = cache.deltas[num_layers - 1].slice_mut(0..bs * out_dim);
@@ -301,7 +301,7 @@ impl MLP {
                 let a_prev = cache.activations.slice(a_prev_off..a_prev_off + bs * c);
                 let delta_curr = cache.deltas[l].slice(0..bs * next_dim);
                 let mut dw = acc_grads.dw.slice_mut(acc_grads.w_offsets[l]..);
-                blas.gemm_ta(r, bs, c, inv_bs, &delta_curr, &a_prev, 0.0, &mut dw)?;
+                blas.gemm_ta(r, bs, c, inv_bs, &delta_curr, &a_prev, 1.0, &mut dw)?;
             }
 
             {
