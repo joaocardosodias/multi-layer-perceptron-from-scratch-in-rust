@@ -24,6 +24,8 @@ pub struct BatchCache {
     pub activations: CudaSlice<f32>,
     pub a_offsets: Vec<usize>,
     pub deltas: Vec<CudaSlice<f32>>,
+    pub dropout_masks: CudaSlice<f32>,
+    pub dm_offsets: Vec<usize>,
 }
 
 impl BatchCache {
@@ -37,6 +39,8 @@ impl BatchCache {
         let mut activations_data = Vec::new();
         let mut a_offsets = Vec::new();
         let mut deltas = Vec::new();
+        let mut dropout_masks_data = Vec::new();
+        let mut dm_offsets = Vec::new();
 
         a_offsets.push(0);
         activations_data.resize(batch_size * dims[0].1, 0.0);
@@ -48,13 +52,18 @@ impl BatchCache {
             a_offsets.push(activations_data.len());
             activations_data.resize(activations_data.len() + batch_size * r, 0.0);
 
+            dm_offsets.push(dropout_masks_data.len());
+            dropout_masks_data.resize(dropout_masks_data.len() + batch_size * r, 1.0);
+
             deltas.push(dev.alloc_zeros::<f32>(batch_size * r)?);
         }
         p_offsets.push(pre_activations_data.len());
         a_offsets.push(activations_data.len());
+        dm_offsets.push(dropout_masks_data.len());
 
         let pre_activations = dev.htod_sync_copy(&pre_activations_data)?;
         let activations = dev.htod_sync_copy(&activations_data)?;
+        let dropout_masks = dev.htod_sync_copy(&dropout_masks_data)?;
 
         Ok(BatchCache {
             pre_activations,
@@ -62,6 +71,8 @@ impl BatchCache {
             activations,
             a_offsets,
             deltas,
+            dropout_masks,
+            dm_offsets,
         })
     }
 }
@@ -191,13 +202,14 @@ impl MLP {
             } else {
                 launch_relu(&kernels.relu, &mut z_slice, &mut a_slice, bs * rows)?;
                 if is_training {
-                    let seed = fastrand::u32(..);
-                    launch_dropout(
-                        &kernels.dropout,
+                    let dm_off = cache.dm_offsets[i];
+                    let mask_slice = cache.dropout_masks.slice(dm_off..dm_off + bs * rows);
+                    launch_apply_dropout_mask(
+                        &kernels.apply_dropout_mask,
                         &mut a_slice,
+                        &mask_slice,
                         bs * rows,
                         dropout_keep,
-                        seed,
                     )?;
                 }
             }
@@ -291,6 +303,14 @@ impl MLP {
                     &kernels.relu_backward,
                     &z_prev,
                     &mut delta_curr,
+                    bs * next_dim,
+                )?;
+                let dm_off = cache.dm_offsets[l];
+                let mask_slice = cache.dropout_masks.slice(dm_off..dm_off + bs * next_dim);
+                launch_apply_dropout_mask_backward(
+                    &kernels.apply_dropout_mask_backward,
+                    &mut delta_curr,
+                    &mask_slice,
                     bs * next_dim,
                 )?;
             }

@@ -6,6 +6,9 @@ mod optimizers;
 mod utils;
 
 use cudarc::driver::{CudaDevice, DeviceSlice};
+use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use std::time::Instant;
 
 use kernels::{
@@ -69,6 +72,8 @@ fn main() {
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
     let mut train_images_augmented = vec![0.0f32; num_train * 784];
+    let total_dm_size = cache.dm_offsets.last().copied().unwrap_or(0);
+    let mut dropout_masks_cpu = vec![1.0f32; total_dm_size];
 
     let total_start = Instant::now();
     let mut best_test_acc = 0.0f32;
@@ -133,6 +138,29 @@ fn main() {
                 bs,
             )
             .expect("Falha gather labels");
+
+            // Generate dropout masks on CPU using StdRng (same as CPU)
+            let mut dropout_rng = StdRng::seed_from_u64((epoch * num_batches + batch_num) as u64);
+            for layer_idx in 0..mlp.dims.len() - 1 {
+                let (rows, _) = mlp.dims[layer_idx];
+                let dm_off = cache.dm_offsets[layer_idx];
+                let mask_size = bs * rows;
+                let scale = 1.0 / DROPOUT_KEEP;
+                for k in 0..mask_size {
+                    let val = if dropout_rng.gen_bool(DROPOUT_KEEP as f64) {
+                        scale
+                    } else {
+                        0.0
+                    };
+                    dropout_masks_cpu[dm_off + k] = val;
+                }
+            }
+            // Copy dropout masks to GPU
+            dev.htod_sync_copy_into(
+                &dropout_masks_cpu[..total_dm_size],
+                &mut cache.dropout_masks.slice_mut(0..total_dm_size),
+            )
+            .expect("Falha copiar dropout masks");
 
             let dev_input = batch_input.slice(0..bs * 784);
             mlp.forward_batch(

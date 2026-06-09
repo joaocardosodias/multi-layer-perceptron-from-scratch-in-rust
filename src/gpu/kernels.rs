@@ -30,6 +30,8 @@ pub struct Kernels {
     pub gaussian_blur_h: CudaFunction,
     pub gaussian_blur_v: CudaFunction,
     pub apply_elastic_distortion: CudaFunction,
+    pub apply_dropout_mask: CudaFunction,
+    pub apply_dropout_mask_backward: CudaFunction,
 }
 
 impl Kernels {
@@ -56,6 +58,9 @@ impl Kernels {
         let gaussian_blur_v = compile_kernel!(dev, "gaussian_blur_v", GAUSSIAN_BLUR_V);
         let apply_elastic_distortion =
             compile_kernel!(dev, "apply_elastic_distortion", APPLY_ELASTIC_DISTORTION);
+        let apply_dropout_mask = compile_kernel!(dev, "apply_dropout_mask", APPLY_DROPOUT_MASK);
+        let apply_dropout_mask_backward =
+            compile_kernel!(dev, "apply_dropout_mask_backward", APPLY_DROPOUT_MASK_BACKWARD);
 
         Ok(Kernels {
             bias_add,
@@ -74,6 +79,8 @@ impl Kernels {
             gaussian_blur_h,
             gaussian_blur_v,
             apply_elastic_distortion,
+            apply_dropout_mask,
+            apply_dropout_mask_backward,
         })
     }
 }
@@ -351,6 +358,35 @@ pub fn launch_gather_labels(
     Ok(())
 }
 
+pub fn launch_apply_dropout_mask(
+    f: &CudaFunction,
+    activations: &mut CudaViewMut<f32>,
+    mask: &CudaView<f32>,
+    n: usize,
+    scale: f32,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(n);
+    unsafe {
+        f.clone()
+            .launch(cfg, (activations, mask, n as i32, scale))?
+    };
+    Ok(())
+}
+
+pub fn launch_apply_dropout_mask_backward(
+    f: &CudaFunction,
+    delta: &mut CudaViewMut<f32>,
+    mask: &CudaView<f32>,
+    n: usize,
+) -> Result<(), GpuError> {
+    let cfg = launch_cfg(n);
+    unsafe {
+        f.clone()
+            .launch(cfg, (delta, mask, n as i32))?
+    };
+    Ok(())
+}
+
 pub fn launch_count_correct(
     f: &CudaFunction,
     probs: &CudaView<f32>,
@@ -426,6 +462,26 @@ extern "C" __global__ void dropout(float* a, int n, float p_keep, unsigned int s
         float r     = (s & 0x7FFFFFFFu) * (1.0f / 2147483647.0f);
         float scale = 1.0f / p_keep;
         a[i] = r < p_keep ? a[i] * scale : 0.0f;
+    }
+}
+"#;
+
+const APPLY_DROPOUT_MASK: &str = r#"
+extern "C" __global__ void apply_dropout_mask(float* a, const float* mask, int n, float scale) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        float m = __ldg(&mask[i]);
+        a[i] = m > 0.5f ? a[i] * scale : 0.0f;
+    }
+}
+"#;
+
+const APPLY_DROPOUT_MASK_BACKWARD: &str = r#"
+extern "C" __global__ void apply_dropout_mask_backward(float* delta, const float* mask, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        float m = __ldg(&mask[i]);
+        delta[i] *= m;
     }
 }
 "#;
