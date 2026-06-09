@@ -173,9 +173,9 @@ Um detalhe muito legal é que isso era perfeitamente visível nos logs: nas últ
 
 Para aguentar a complexidade do Data Augmentation, escalei a rede para `[784, 2048, 1024, 10]`, contando com 2048 neurônios na primeira camada oculta. Uma rede pequena não teria capacidade suficiente para aprender com imagens tão distorcidas.
 
-Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.58%**, bem próximo do recorde mundial de 99.74%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
+Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.60%**, bem próximo do recorde mundial de 99.74%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
 
-![Resultado Final - Acurácia 99.58%](assets/Screenshot_2026-06-06-174033.png)
+![Resultado Final - Acurácia 99.60%](assets/Screenshot_2026-06-09-121114.png)
 
 O tempo total dessas 300 épocas foi de 38 minutos. Agora pense: se eu não tivesse feito as otimizações, seriam 23 minutos para cada 25 épocas. Calculando para 300 épocas, daria algo em torno de 4,6 horas. E imagine se eu fizesse na porcaria do Python (sem PyTorch, usando só NumPy, sem BLAS otimizado), daria mais de um dia com certeza.
 
