@@ -5,8 +5,8 @@ use rand_distr::{Distribution, Normal};
 use std::sync::Arc;
 
 use crate::error::GpuError;
-use crate::linalg::BlasHandle;
 use crate::kernels::*;
+use crate::linalg::BlasHandle;
 
 #[allow(dead_code)]
 pub struct MLP {
@@ -27,7 +27,11 @@ pub struct BatchCache {
 }
 
 impl BatchCache {
-    pub fn new(dev: &Arc<CudaDevice>, dims: &[(usize, usize)], batch_size: usize) -> Result<Self, GpuError> {
+    pub fn new(
+        dev: &Arc<CudaDevice>,
+        dims: &[(usize, usize)],
+        batch_size: usize,
+    ) -> Result<Self, GpuError> {
         let mut pre_activations_data = Vec::new();
         let mut p_offsets = Vec::new();
         let mut activations_data = Vec::new();
@@ -122,9 +126,16 @@ impl MLP {
         b_offsets.push(biases.len());
 
         let weights = dev.htod_sync_copy(&weights)?;
-        let biases  = dev.htod_sync_copy(&biases)?;
+        let biases = dev.htod_sync_copy(&biases)?;
 
-        Ok(MLP { weights, w_offsets, biases, b_offsets, dims, dev: dev.clone() })
+        Ok(MLP {
+            weights,
+            w_offsets,
+            biases,
+            b_offsets,
+            dims,
+            dev: dev.clone(),
+        })
     }
 
     pub fn forward_batch(
@@ -151,12 +162,23 @@ impl MLP {
                 let a_prev_view = if i == 0 {
                     input.slice(0..bs * cols)
                 } else {
-                    cache.activations.slice(cache.a_offsets[i]..cache.a_offsets[i] + bs * cols)
+                    cache
+                        .activations
+                        .slice(cache.a_offsets[i]..cache.a_offsets[i] + bs * cols)
                 };
 
                 let mut z_slice = cache.pre_activations.slice_mut(p_off..p_off + bs * rows);
 
-                blas.gemm_tb(bs, cols, rows, 1.0, &a_prev_view, &w_slice, 0.0, &mut z_slice)?;
+                blas.gemm_tb(
+                    bs,
+                    cols,
+                    rows,
+                    1.0,
+                    &a_prev_view,
+                    &w_slice,
+                    0.0,
+                    &mut z_slice,
+                )?;
 
                 launch_bias_add(&kernels.bias_add, &mut z_slice, &b_slice, bs, rows)?;
             }
@@ -170,7 +192,13 @@ impl MLP {
                 launch_relu(&kernels.relu, &mut z_slice, &mut a_slice, bs * rows)?;
                 if is_training {
                     let seed = fastrand::u32(..);
-                    launch_dropout(&kernels.dropout, &mut a_slice, bs * rows, dropout_keep, seed)?;
+                    launch_dropout(
+                        &kernels.dropout,
+                        &mut a_slice,
+                        bs * rows,
+                        dropout_keep,
+                        seed,
+                    )?;
                 }
             }
         }
@@ -196,26 +224,36 @@ impl MLP {
         let targets_view = targets.slice(0..bs);
 
         {
-            let probs = cache.activations.slice(a_last_off..a_last_off + bs * out_dim);
+            let probs = cache
+                .activations
+                .slice(a_last_off..a_last_off + bs * out_dim);
             let mut delta_out = cache.deltas[num_layers - 1].slice_mut(0..bs * out_dim);
             launch_softmax_crossentropy_backward(
                 &kernels.softmax_crossentropy_backward,
-                &probs, &mut delta_out, &targets_view,
-                bs, out_dim, label_smoothing,
+                &probs,
+                &mut delta_out,
+                &targets_view,
+                bs,
+                out_dim,
+                label_smoothing,
             )?;
         }
 
         {
             let (rows, cols) = self.dims[num_layers - 1];
             let a_prev_off = cache.a_offsets[num_layers - 1];
-            let a_prev  = cache.activations.slice(a_prev_off..a_prev_off + bs * cols);
-            let delta   = cache.deltas[num_layers - 1].slice(0..bs * out_dim);
-            let mut dw  = acc_grads.dw.slice_mut(acc_grads.w_offsets[num_layers - 1]..);
+            let a_prev = cache.activations.slice(a_prev_off..a_prev_off + bs * cols);
+            let delta = cache.deltas[num_layers - 1].slice(0..bs * out_dim);
+            let mut dw = acc_grads
+                .dw
+                .slice_mut(acc_grads.w_offsets[num_layers - 1]..);
             blas.gemm_ta(rows, bs, cols, inv_bs, &delta, &a_prev, 0.0, &mut dw)?;
         }
         {
-            let mut delta  = cache.deltas[num_layers - 1].slice_mut(0..bs * out_dim);
-            let mut db     = acc_grads.db.slice_mut(acc_grads.b_offsets[num_layers - 1]..);
+            let mut delta = cache.deltas[num_layers - 1].slice_mut(0..bs * out_dim);
+            let mut db = acc_grads
+                .db
+                .slice_mut(acc_grads.b_offsets[num_layers - 1]..);
             launch_sum_rows(&kernels.sum_rows, &mut delta, &mut db, bs, out_dim)?;
         }
 
@@ -223,34 +261,52 @@ impl MLP {
             let (rows_next, _) = self.dims[l + 1];
             let next_dim = self.dims[l].0;
             let w_next_off = self.w_offsets[l + 1];
-            let w_next = self.weights.slice(w_next_off..w_next_off + rows_next * next_dim);
+            let w_next = self
+                .weights
+                .slice(w_next_off..w_next_off + rows_next * next_dim);
 
             {
                 let (left, right) = cache.deltas.split_at_mut(l + 1);
                 let delta_next = right[0].slice(0..bs * rows_next);
                 let mut delta_curr = left[l].slice_mut(0..bs * next_dim);
-                blas.gemm(bs, rows_next, next_dim, 1.0, &delta_next, &w_next, 0.0, &mut delta_curr)?;
+                blas.gemm(
+                    bs,
+                    rows_next,
+                    next_dim,
+                    1.0,
+                    &delta_next,
+                    &w_next,
+                    0.0,
+                    &mut delta_curr,
+                )?;
             }
 
             {
                 let z_prev_off = cache.p_offsets[l];
-                let z_prev = cache.pre_activations.slice(z_prev_off..z_prev_off + bs * next_dim);
+                let z_prev = cache
+                    .pre_activations
+                    .slice(z_prev_off..z_prev_off + bs * next_dim);
                 let mut delta_curr = cache.deltas[l].slice_mut(0..bs * next_dim);
-                launch_relu_backward(&kernels.relu_backward, &z_prev, &mut delta_curr, bs * next_dim)?;
+                launch_relu_backward(
+                    &kernels.relu_backward,
+                    &z_prev,
+                    &mut delta_curr,
+                    bs * next_dim,
+                )?;
             }
 
             {
                 let (r, c) = self.dims[l];
                 let a_prev_off = cache.a_offsets[l];
-                let a_prev     = cache.activations.slice(a_prev_off..a_prev_off + bs * c);
+                let a_prev = cache.activations.slice(a_prev_off..a_prev_off + bs * c);
                 let delta_curr = cache.deltas[l].slice(0..bs * next_dim);
-                let mut dw     = acc_grads.dw.slice_mut(acc_grads.w_offsets[l]..);
+                let mut dw = acc_grads.dw.slice_mut(acc_grads.w_offsets[l]..);
                 blas.gemm_ta(r, bs, c, inv_bs, &delta_curr, &a_prev, 0.0, &mut dw)?;
             }
 
             {
                 let mut delta_curr = cache.deltas[l].slice_mut(0..bs * next_dim);
-                let mut db         = acc_grads.db.slice_mut(acc_grads.b_offsets[l]..);
+                let mut db = acc_grads.db.slice_mut(acc_grads.b_offsets[l]..);
                 launch_sum_rows(&kernels.sum_rows, &mut delta_curr, &mut db, bs, next_dim)?;
             }
         }

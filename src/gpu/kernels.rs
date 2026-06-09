@@ -1,4 +1,4 @@
-use cudarc::driver::{CudaDevice, CudaFunction, LaunchConfig, CudaView, CudaViewMut, LaunchAsync};
+use cudarc::driver::{CudaDevice, CudaFunction, CudaView, CudaViewMut, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
 use std::sync::Arc;
 
@@ -8,7 +8,8 @@ macro_rules! compile_kernel {
     ($dev:expr, $name:expr, $code:expr) => {{
         let ptx = compile_ptx($code)?;
         $dev.load_ptx(ptx, $name, &[$name])?;
-        $dev.get_func($name, $name).ok_or_else(|| GpuError::Other(format!("Kernel {} not found", $name)))?
+        $dev.get_func($name, $name)
+            .ok_or_else(|| GpuError::Other(format!("Kernel {} not found", $name)))?
     }};
 }
 
@@ -33,29 +34,46 @@ pub struct Kernels {
 
 impl Kernels {
     pub fn new(dev: &Arc<CudaDevice>) -> Result<Self, GpuError> {
-        let bias_add                      = compile_kernel!(dev, "bias_add",                    BIAS_ADD);
-        let relu                          = compile_kernel!(dev, "relu",                        RELU);
-        let relu_backward                 = compile_kernel!(dev, "relu_backward",               RELU_BACKWARD);
-        let dropout                       = compile_kernel!(dev, "dropout",                     DROPOUT);
-        let softmax                       = compile_kernel!(dev, "softmax",                     SOFTMAX);
-        let softmax_crossentropy_backward = compile_kernel!(dev, "softmax_crossentropy_backward", SOFTMAX_CROSSENTROPY_BACKWARD);
-        let adam_update                   = compile_kernel!(dev, "adam_update",                 ADAM_UPDATE);
-        let sum_rows                      = compile_kernel!(dev, "sum_rows",                    SUM_ROWS);
-        let gather_and_augment            = compile_kernel!(dev, "gather_and_augment",          GATHER_AND_AUGMENT);
-        let count_correct                 = compile_kernel!(dev, "count_correct",               COUNT_CORRECT);
-        let compute_loss                  = compile_kernel!(dev, "compute_loss",                COMPUTE_LOSS);
-        let gather_labels                 = compile_kernel!(dev, "gather_labels",               GATHER_LABELS);
-        let generate_offset_fields        = compile_kernel!(dev, "generate_offset_fields",      GENERATE_OFFSET_FIELDS);
-        let gaussian_blur_h               = compile_kernel!(dev, "gaussian_blur_h",             GAUSSIAN_BLUR_H);
-        let gaussian_blur_v               = compile_kernel!(dev, "gaussian_blur_v",             GAUSSIAN_BLUR_V);
-        let apply_elastic_distortion      = compile_kernel!(dev, "apply_elastic_distortion",    APPLY_ELASTIC_DISTORTION);
+        let bias_add = compile_kernel!(dev, "bias_add", BIAS_ADD);
+        let relu = compile_kernel!(dev, "relu", RELU);
+        let relu_backward = compile_kernel!(dev, "relu_backward", RELU_BACKWARD);
+        let dropout = compile_kernel!(dev, "dropout", DROPOUT);
+        let softmax = compile_kernel!(dev, "softmax", SOFTMAX);
+        let softmax_crossentropy_backward = compile_kernel!(
+            dev,
+            "softmax_crossentropy_backward",
+            SOFTMAX_CROSSENTROPY_BACKWARD
+        );
+        let adam_update = compile_kernel!(dev, "adam_update", ADAM_UPDATE);
+        let sum_rows = compile_kernel!(dev, "sum_rows", SUM_ROWS);
+        let gather_and_augment = compile_kernel!(dev, "gather_and_augment", GATHER_AND_AUGMENT);
+        let count_correct = compile_kernel!(dev, "count_correct", COUNT_CORRECT);
+        let compute_loss = compile_kernel!(dev, "compute_loss", COMPUTE_LOSS);
+        let gather_labels = compile_kernel!(dev, "gather_labels", GATHER_LABELS);
+        let generate_offset_fields =
+            compile_kernel!(dev, "generate_offset_fields", GENERATE_OFFSET_FIELDS);
+        let gaussian_blur_h = compile_kernel!(dev, "gaussian_blur_h", GAUSSIAN_BLUR_H);
+        let gaussian_blur_v = compile_kernel!(dev, "gaussian_blur_v", GAUSSIAN_BLUR_V);
+        let apply_elastic_distortion =
+            compile_kernel!(dev, "apply_elastic_distortion", APPLY_ELASTIC_DISTORTION);
 
         Ok(Kernels {
-            bias_add, relu, relu_backward, dropout, softmax,
-            softmax_crossentropy_backward, adam_update, sum_rows,
-            gather_and_augment, count_correct, compute_loss,
-            gather_labels, generate_offset_fields, gaussian_blur_h,
-            gaussian_blur_v, apply_elastic_distortion,
+            bias_add,
+            relu,
+            relu_backward,
+            dropout,
+            softmax,
+            softmax_crossentropy_backward,
+            adam_update,
+            sum_rows,
+            gather_and_augment,
+            count_correct,
+            compute_loss,
+            gather_labels,
+            generate_offset_fields,
+            gaussian_blur_h,
+            gaussian_blur_v,
+            apply_elastic_distortion,
         })
     }
 }
@@ -63,14 +81,19 @@ impl Kernels {
 fn launch_cfg(n: usize) -> LaunchConfig {
     let block_size: u32 = 256;
     let grid_size = ((n as u32) + block_size - 1) / block_size;
-    LaunchConfig { block_dim: (block_size, 1, 1), grid_dim: (grid_size, 1, 1), shared_mem_bytes: 0 }
+    LaunchConfig {
+        block_dim: (block_size, 1, 1),
+        grid_dim: (grid_size, 1, 1),
+        shared_mem_bytes: 0,
+    }
 }
 
 pub fn launch_bias_add(
     f: &CudaFunction,
     out: &mut CudaViewMut<f32>,
     b: &CudaView<f32>,
-    rows: usize, cols: usize,
+    rows: usize,
+    cols: usize,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(rows * cols);
     unsafe { f.clone().launch(cfg, (out, b, rows as i32, cols as i32))? };
@@ -103,7 +126,8 @@ pub fn launch_dropout(
     f: &CudaFunction,
     a: &mut CudaViewMut<f32>,
     n: usize,
-    p_keep: f32, seed: u32,
+    p_keep: f32,
+    seed: u32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(n);
     unsafe { f.clone().launch(cfg, (a, n as i32, p_keep, seed))? };
@@ -114,11 +138,12 @@ pub fn launch_softmax(
     f: &CudaFunction,
     z: &mut CudaViewMut<f32>,
     a: &mut CudaViewMut<f32>,
-    rows: usize, cols: usize,
+    rows: usize,
+    cols: usize,
 ) -> Result<(), GpuError> {
     let cfg = LaunchConfig {
         block_dim: (32, 1, 1),
-        grid_dim:  (rows as u32, 1, 1),
+        grid_dim: (rows as u32, 1, 1),
         shared_mem_bytes: 0,
     };
     unsafe { f.clone().launch(cfg, (z, a, rows as i32, cols as i32))? };
@@ -130,11 +155,24 @@ pub fn launch_softmax_crossentropy_backward(
     probs: &CudaView<f32>,
     delta: &mut CudaViewMut<f32>,
     targets: &CudaView<i32>,
-    bs: usize, out_dim: usize,
+    bs: usize,
+    out_dim: usize,
     label_smoothing: f32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(bs * out_dim);
-    unsafe { f.clone().launch(cfg, (probs, delta, targets, bs as i32, out_dim as i32, label_smoothing))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (
+                probs,
+                delta,
+                targets,
+                bs as i32,
+                out_dim as i32,
+                label_smoothing,
+            ),
+        )?
+    };
     Ok(())
 }
 
@@ -145,10 +183,20 @@ pub fn launch_adam_update(
     v: &mut cudarc::driver::CudaSlice<f32>,
     g: &cudarc::driver::CudaSlice<f32>,
     n: usize,
-    lr: f32, beta1: f32, beta2: f32, eps: f32, weight_decay: f32, t: i32,
+    lr: f32,
+    beta1: f32,
+    beta2: f32,
+    eps: f32,
+    weight_decay: f32,
+    t: i32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(n);
-    unsafe { f.clone().launch(cfg, (w, m, v, g, n as i32, lr, beta1, beta2, eps, weight_decay, t))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (w, m, v, g, n as i32, lr, beta1, beta2, eps, weight_decay, t),
+        )?
+    };
     Ok(())
 }
 
@@ -156,16 +204,20 @@ pub fn launch_sum_rows(
     f: &CudaFunction,
     delta: &mut CudaViewMut<f32>,
     db: &mut CudaViewMut<f32>,
-    rows: usize, cols: usize,
+    rows: usize,
+    cols: usize,
 ) -> Result<(), GpuError> {
     let block: u32 = 256;
-    let shared     = block * 4;
+    let shared = block * 4;
     let cfg = LaunchConfig {
         block_dim: (block, 1, 1),
-        grid_dim:  (cols as u32, 1, 1),
+        grid_dim: (cols as u32, 1, 1),
         shared_mem_bytes: shared,
     };
-    unsafe { f.clone().launch(cfg, (delta, db, rows as i32, cols as i32))? };
+    unsafe {
+        f.clone()
+            .launch(cfg, (delta, db, rows as i32, cols as i32))?
+    };
     Ok(())
 }
 
@@ -179,7 +231,12 @@ pub fn launch_gather_and_augment(
     p_keep: f32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
-    unsafe { f.clone().launch(cfg, (all_images, indices, batch, batch_size as i32, seed, p_keep))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (all_images, indices, batch, batch_size as i32, seed, p_keep),
+        )?
+    };
     Ok(())
 }
 
@@ -205,7 +262,19 @@ pub fn launch_gaussian_blur_h(
     radius: usize,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
-    unsafe { f.clone().launch(cfg, (input, output, batch_size as i32, kernel, kernel_size as i32, radius as i32))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (
+                input,
+                output,
+                batch_size as i32,
+                kernel,
+                kernel_size as i32,
+                radius as i32,
+            ),
+        )?
+    };
     Ok(())
 }
 
@@ -219,7 +288,19 @@ pub fn launch_gaussian_blur_v(
     radius: usize,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
-    unsafe { f.clone().launch(cfg, (input, output, batch_size as i32, kernel, kernel_size as i32, radius as i32))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (
+                input,
+                output,
+                batch_size as i32,
+                kernel,
+                kernel_size as i32,
+                radius as i32,
+            ),
+        )?
+    };
     Ok(())
 }
 
@@ -236,7 +317,22 @@ pub fn launch_apply_elastic_distortion(
     alpha: f32,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size * 784);
-    unsafe { f.clone().launch(cfg, (all_images, indices, dx, dy, batch, batch_size as i32, seed, p_keep, alpha))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (
+                all_images,
+                indices,
+                dx,
+                dy,
+                batch,
+                batch_size as i32,
+                seed,
+                p_keep,
+                alpha,
+            ),
+        )?
+    };
     Ok(())
 }
 
@@ -248,7 +344,10 @@ pub fn launch_gather_labels(
     batch_size: usize,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size);
-    unsafe { f.clone().launch(cfg, (all_labels, indices, batch, batch_size as i32))? };
+    unsafe {
+        f.clone()
+            .launch(cfg, (all_labels, indices, batch, batch_size as i32))?
+    };
     Ok(())
 }
 
@@ -261,10 +360,13 @@ pub fn launch_count_correct(
 ) -> Result<(), GpuError> {
     let cfg = LaunchConfig {
         block_dim: (1, 1, 1),
-        grid_dim:  (batch_size as u32, 1, 1),
+        grid_dim: (batch_size as u32, 1, 1),
         shared_mem_bytes: 0,
     };
-    unsafe { f.clone().launch(cfg, (probs, labels, correct, batch_size as i32))? };
+    unsafe {
+        f.clone()
+            .launch(cfg, (probs, labels, correct, batch_size as i32))?
+    };
     Ok(())
 }
 
@@ -273,10 +375,16 @@ pub fn launch_compute_loss(
     probs: &CudaView<f32>,
     labels: &CudaView<i32>,
     loss: &mut CudaViewMut<f32>,
-    batch_size: usize, out_dim: usize,
+    batch_size: usize,
+    out_dim: usize,
 ) -> Result<(), GpuError> {
     let cfg = launch_cfg(batch_size);
-    unsafe { f.clone().launch(cfg, (probs, labels, loss, batch_size as i32, out_dim as i32))? };
+    unsafe {
+        f.clone().launch(
+            cfg,
+            (probs, labels, loss, batch_size as i32, out_dim as i32),
+        )?
+    };
     Ok(())
 }
 

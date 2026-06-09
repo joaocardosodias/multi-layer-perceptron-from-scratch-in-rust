@@ -1,9 +1,9 @@
 use crate::network::{BatchCache, MLP};
 use mlp::common::losses::cross_entropy;
-use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use rand::Rng;
+use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 
 pub fn shuffle(indices: &mut [usize]) {
@@ -13,15 +13,24 @@ pub fn shuffle(indices: &mut [usize]) {
 pub fn argmax(v: &[f32]) -> usize {
     let mut max_idx = 0;
     for i in 1..v.len() {
-        if v[i] > v[max_idx] { max_idx = i; }
+        if v[i] > v[max_idx] {
+            max_idx = i;
+        }
     }
     max_idx
 }
 
-pub fn evaluate_batch(mlp: &MLP, images: &[f32], num_images: usize, labels: &[usize]) -> (f32, f32) {
+pub fn evaluate_batch(
+    mlp: &MLP,
+    images: &[f32],
+    num_images: usize,
+    labels: &[usize],
+) -> (f32, f32) {
     let eval_bs = 256;
     let num_threads = rayon::current_num_threads();
-    let chunk_size = ((num_images + num_threads - 1) / num_threads).next_multiple_of(eval_bs).max(eval_bs);
+    let chunk_size = ((num_images + num_threads - 1) / num_threads)
+        .next_multiple_of(eval_bs)
+        .max(eval_bs);
 
     let (correct, total_loss): (usize, f32) = (0..num_images)
         .collect::<Vec<_>>()
@@ -54,8 +63,10 @@ pub fn evaluate_batch(mlp: &MLP, images: &[f32], num_images: usize, labels: &[us
                 for (k, &i) in chunk.iter().enumerate() {
                     let off = k * out_dim;
                     let a_off = cache.a_offsets[mlp.dims.len()];
-                    let probs = &cache.activations[a_off + off .. a_off + off + out_dim];
-                    if argmax(probs) == labels[i] { c += 1; }
+                    let probs = &cache.activations[a_off + off..a_off + off + out_dim];
+                    if argmax(probs) == labels[i] {
+                        c += 1;
+                    }
                     loss += cross_entropy(probs, labels[i]);
                 }
             }
@@ -109,7 +120,6 @@ pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: 
     }
 }
 
-
 fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     let radius = (3.0 * sigma).ceil() as usize;
     let k_size = 2 * radius + 1;
@@ -120,7 +130,9 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
         kernel[i] = (-x * x / (2.0 * sigma * sigma)).exp();
         sum += kernel[i];
     }
-    for k in &mut kernel { *k /= sum; }
+    for k in &mut kernel {
+        *k /= sum;
+    }
 
     let mut tmp = [0.0f32; 784];
 
@@ -147,13 +159,7 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     }
 }
 
-pub fn elastic_distort(
-    src: &[f32],
-    dst: &mut [f32],
-    alpha: f32,
-    sigma: f32,
-    rng: &mut StdRng,
-) {
+pub fn elastic_distort(src: &[f32], dst: &mut [f32], alpha: f32, sigma: f32, rng: &mut StdRng) {
     let mut dx: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
     let mut dy: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
 

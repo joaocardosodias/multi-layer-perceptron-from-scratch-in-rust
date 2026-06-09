@@ -1,11 +1,11 @@
 use cudarc::driver::CudaDevice;
-use std::sync::Arc;
 use rand::prelude::SliceRandom;
+use std::sync::Arc;
 
 use crate::error::GpuError;
-use crate::network::{BatchCache, MLP};
 use crate::kernels::Kernels;
 use crate::linalg::BlasHandle;
+use crate::network::{BatchCache, MLP};
 use mlp::common::losses::cross_entropy;
 
 pub fn evaluate_batch(
@@ -49,7 +49,11 @@ pub fn evaluate_batch(
 
         // Copiar resultados de volta para CPU
         let a_last_off = cache.a_offsets[mlp.dims.len()];
-        let probs_host = dev.dtoh_sync_copy(&cache.activations.slice(a_last_off..a_last_off + bs * out_dim))?;
+        let probs_host = dev.dtoh_sync_copy(
+            &cache
+                .activations
+                .slice(a_last_off..a_last_off + bs * out_dim),
+        )?;
 
         for s in 0..bs {
             let off = s * out_dim;
@@ -69,7 +73,9 @@ pub fn evaluate_batch(
 pub fn argmax(v: &[f32]) -> usize {
     let mut max_idx = 0;
     for i in 1..v.len() {
-        if v[i] > v[max_idx] { max_idx = i; }
+        if v[i] > v[max_idx] {
+            max_idx = i;
+        }
     }
     max_idx
 }
@@ -127,7 +133,9 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
         kernel[i] = (-x * x / (2.0 * sigma * sigma)).exp();
         sum += kernel[i];
     }
-    for k in &mut kernel { *k /= sum; }
+    for k in &mut kernel {
+        *k /= sum;
+    }
 
     let mut tmp = [0.0f32; 784];
     for y in 0..28usize {

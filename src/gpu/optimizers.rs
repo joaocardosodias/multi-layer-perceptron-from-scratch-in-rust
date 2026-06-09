@@ -2,9 +2,9 @@ use cudarc::driver::{CudaDevice, CudaSlice, DeviceSlice};
 use std::sync::Arc;
 
 use crate::error::GpuError;
-use crate::network::{Gradients, MLP};
 use crate::kernels::Kernels;
 use crate::kernels::launch_adam_update;
+use crate::network::{Gradients, MLP};
 
 pub struct AdamState {
     pub m_w: CudaSlice<f32>,
@@ -21,7 +21,11 @@ impl AdamState {
         let m_b = dev.alloc_zeros::<f32>(mlp.biases.len())?;
         let v_b = dev.alloc_zeros::<f32>(mlp.biases.len())?;
         Ok(AdamState {
-            m_w, v_w, m_b, v_b, t: 0,
+            m_w,
+            v_w,
+            m_b,
+            v_b,
+            t: 0,
         })
     }
 }
@@ -50,7 +54,12 @@ pub fn adam_update(
         &mut state.v_w,
         &grads.dw,
         w_len,
-        lr, BETA1, BETA2, EPS, WEIGHT_DECAY, state.t,
+        lr,
+        BETA1,
+        BETA2,
+        EPS,
+        WEIGHT_DECAY,
+        state.t,
     )?;
 
     launch_adam_update(
@@ -60,7 +69,12 @@ pub fn adam_update(
         &mut state.v_b,
         &grads.db,
         b_len,
-        lr, BETA1, BETA2, EPS, 0.0, state.t,
+        lr,
+        BETA1,
+        BETA2,
+        EPS,
+        0.0,
+        state.t,
     )?;
 
     Ok(())
@@ -95,7 +109,8 @@ impl OneCycleLR {
             let cos_out = (std::f32::consts::PI * (1.0 + pct)).cos() + 1.0;
             self.init_lr + (self.max_lr - self.init_lr) * 0.5 * cos_out
         } else {
-            let pct = ((self.current_step - self.warmup_steps) as f32 / self.decay_steps as f32).min(1.0);
+            let pct =
+                ((self.current_step - self.warmup_steps) as f32 / self.decay_steps as f32).min(1.0);
             let cos_out = (std::f32::consts::PI * pct).cos() + 1.0;
             self.final_lr + (self.max_lr - self.final_lr) * 0.5 * cos_out
         };

@@ -55,7 +55,9 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
         kernel[i] = (-x * x / (2.0 * sigma * sigma)).exp();
         sum += kernel[i];
     }
-    for k in &mut kernel { *k /= sum; }
+    for k in &mut kernel {
+        *k /= sum;
+    }
 
     let mut tmp = [0.0f32; 784];
 
@@ -82,13 +84,7 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     }
 }
 
-pub fn elastic_distort(
-    src: &[f32],
-    dst: &mut [f32],
-    alpha: f32,
-    sigma: f32,
-    rng: &mut StdRng,
-) {
+pub fn elastic_distort(src: &[f32], dst: &mut [f32], alpha: f32, sigma: f32, rng: &mut StdRng) {
     let mut dx: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
     let mut dy: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
 
@@ -125,21 +121,24 @@ pub fn generate_augmented_dataset(
 ) -> Vec<f32> {
     let mut augmented = vec![0.0f32; num_train * 784];
 
-    augmented.par_chunks_mut(784).enumerate().for_each(|(idx, dst)| {
-        let mut rng = StdRng::seed_from_u64(epoch_seed.wrapping_add(idx as u64));
-        let src = &train_images[idx * 784..(idx + 1) * 784];
+    augmented
+        .par_chunks_mut(784)
+        .enumerate()
+        .for_each(|(idx, dst)| {
+            let mut rng = StdRng::seed_from_u64(epoch_seed.wrapping_add(idx as u64));
+            let src = &train_images[idx * 784..(idx + 1) * 784];
 
-        if rng.gen_bool(p_keep as f64) {
-            let angle = rng.gen_range(-10.0..=10.0);
-            let tx = rng.gen_range(-1.5..=1.5);
-            let ty = rng.gen_range(-1.5..=1.5);
-            let mut geo_buf = [0.0f32; 784];
-            augment_image(src, &mut geo_buf, angle, tx, ty);
-            elastic_distort(&geo_buf, dst, 36.0, 5.0, &mut rng);
-        } else {
-            dst.copy_from_slice(src);
-        }
-    });
+            if rng.gen_bool(p_keep as f64) {
+                let angle = rng.gen_range(-10.0..=10.0);
+                let tx = rng.gen_range(-1.5..=1.5);
+                let ty = rng.gen_range(-1.5..=1.5);
+                let mut geo_buf = [0.0f32; 784];
+                augment_image(src, &mut geo_buf, angle, tx, ty);
+                elastic_distort(&geo_buf, dst, 36.0, 5.0, &mut rng);
+            } else {
+                dst.copy_from_slice(src);
+            }
+        });
 
     augmented
 }

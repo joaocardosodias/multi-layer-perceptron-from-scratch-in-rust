@@ -1,5 +1,5 @@
-use cudarc::driver::{CudaDevice, DevicePtr, DevicePtrMut};
 use cudarc::cublas::{CudaBlas, Gemm, GemmConfig};
+use cudarc::driver::{CudaDevice, DevicePtr, DevicePtrMut};
 use std::sync::Arc;
 
 use crate::error::GpuError;
@@ -16,7 +16,9 @@ impl BlasHandle {
 
     pub fn gemm<A: DevicePtr<f32>, B: DevicePtr<f32>, C: DevicePtrMut<f32>>(
         &self,
-        m: usize, k: usize, n: usize,
+        m: usize,
+        k: usize,
+        n: usize,
         alpha: f32,
         a: &A,
         b: &B,
@@ -43,7 +45,9 @@ impl BlasHandle {
 
     pub fn gemm_ta<A: DevicePtr<f32>, B: DevicePtr<f32>, C: DevicePtrMut<f32>>(
         &self,
-        m: usize, k: usize, n: usize,
+        m: usize,
+        k: usize,
+        n: usize,
         alpha: f32,
         a: &A,
         b: &B,
@@ -71,7 +75,9 @@ impl BlasHandle {
     #[allow(dead_code)]
     pub fn gemm_tb<A: DevicePtr<f32>, B: DevicePtr<f32>, C: DevicePtrMut<f32>>(
         &self,
-        m: usize, k: usize, n: usize,
+        m: usize,
+        k: usize,
+        n: usize,
         alpha: f32,
         a: &A,
         b: &B,

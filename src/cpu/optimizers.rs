@@ -31,7 +31,8 @@ impl OneCycleLR {
             let cos_out = (std::f32::consts::PI * (1.0 + pct)).cos() + 1.0;
             self.init_lr + (self.max_lr - self.init_lr) * 0.5 * cos_out
         } else {
-            let pct = ((self.current_step - self.warmup_steps) as f32 / self.decay_steps as f32).min(1.0);
+            let pct =
+                ((self.current_step - self.warmup_steps) as f32 / self.decay_steps as f32).min(1.0);
             let cos_out = (std::f32::consts::PI * pct).cos() + 1.0;
             self.final_lr + (self.max_lr - self.final_lr) * 0.5 * cos_out
         };
@@ -86,10 +87,10 @@ pub fn adam_update(mlp: &mut MLP, grads: &Gradients, state: &mut AdamState, lr: 
         let w_len = mlp.weights.len();
         let sw = w_len - (w_len % 8);
         for i in (0..sw).step_by(8) {
-            let g  = _mm256_loadu_ps(grads.dw.as_ptr().add(i));
-            let m  = _mm256_loadu_ps(state.m_w.as_ptr().add(i));
-            let v  = _mm256_loadu_ps(state.v_w.as_ptr().add(i));
-            let w  = _mm256_loadu_ps(mlp.weights.as_ptr().add(i));
+            let g = _mm256_loadu_ps(grads.dw.as_ptr().add(i));
+            let m = _mm256_loadu_ps(state.m_w.as_ptr().add(i));
+            let v = _mm256_loadu_ps(state.v_w.as_ptr().add(i));
+            let w = _mm256_loadu_ps(mlp.weights.as_ptr().add(i));
             let nm = _mm256_fmadd_ps(b1, m, _mm256_mul_ps(ob1, g));
             let nv = _mm256_fmadd_ps(b2, v, _mm256_mul_ps(ob2, _mm256_mul_ps(g, g)));
             let den = _mm256_add_ps(_mm256_sqrt_ps(nv), eps_v);
@@ -110,9 +111,9 @@ pub fn adam_update(mlp: &mut MLP, grads: &Gradients, state: &mut AdamState, lr: 
         let b_len = mlp.biases.len();
         let sb = b_len - (b_len % 8);
         for i in (0..sb).step_by(8) {
-            let g  = _mm256_loadu_ps(grads.db.as_ptr().add(i));
-            let m  = _mm256_loadu_ps(state.m_b.as_ptr().add(i));
-            let v  = _mm256_loadu_ps(state.v_b.as_ptr().add(i));
+            let g = _mm256_loadu_ps(grads.db.as_ptr().add(i));
+            let m = _mm256_loadu_ps(state.m_b.as_ptr().add(i));
+            let v = _mm256_loadu_ps(state.v_b.as_ptr().add(i));
             let bv = _mm256_loadu_ps(mlp.biases.as_ptr().add(i));
             let nm = _mm256_fmadd_ps(b1, m, _mm256_mul_ps(ob1, g));
             let nv = _mm256_fmadd_ps(b2, v, _mm256_mul_ps(ob2, _mm256_mul_ps(g, g)));
