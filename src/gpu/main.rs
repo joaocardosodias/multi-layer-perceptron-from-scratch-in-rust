@@ -22,7 +22,6 @@ fn main() {
     const BATCH_SIZE: usize = 256;
     const LABEL_SMOOTHING: f32 = 0.0;
 
-    // Ler hiperparâmetros das variáveis de ambiente (ou usar defaults)
     let epochs = std::env::var("EPOCHS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -47,7 +46,6 @@ fn main() {
         epochs, max_lr, augment_p_keep, dropout_keep
     );
 
-    // 1. Carrega dados na CPU
     let (train_images, num_train) =
         load_images("src/data/train-images-idx3-ubyte/train-images.idx3-ubyte");
     let train_labels = load_labels("src/data/train-labels-idx1-ubyte/train-labels.idx1-ubyte");
@@ -55,7 +53,6 @@ fn main() {
         load_images("src/data/t10k-images-idx3-ubyte/t10k-images.idx3-ubyte");
     let test_labels = load_labels("src/data/t10k-labels-idx1-ubyte/t10k-labels.idx1-ubyte");
 
-    // 2. Envia dados de teste para GPU (uma vez só)
     let test_images_gpu = dev
         .htod_sync_copy(&test_images)
         .expect("Falha ao copiar imagens de teste");
@@ -63,12 +60,10 @@ fn main() {
         .htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>())
         .expect("Falha ao copiar labels de teste");
 
-    // 3. Cria MLP e kernels na GPU
     let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
-    // 4. Buffers de batch e índices
     let mut batch_input = dev
         .alloc_zeros::<f32>(BATCH_SIZE * 784)
         .expect("Falha alloc batch");
@@ -81,18 +76,15 @@ fn main() {
     let mut batch_indices_cpu = vec![0i32; BATCH_SIZE];
     let mut indices: Vec<usize> = (0..num_train).collect();
 
-    // 5. Buffers para métricas na GPU
     let mut correct_gpu = dev.alloc_zeros::<i32>(1).expect("Falha alloc correct");
     let mut loss_gpu = dev.alloc_zeros::<f32>(1).expect("Falha alloc loss");
 
-    // 6. Cache para treino e eval
     let mut cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha cache");
     let mut eval_cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha eval cache");
 
     let mut adam = AdamState::new(&dev, &mlp).expect("Falha Adam");
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
 
-    // 7. Buffer para dataset augmentado na CPU
     let mut train_images_augmented = vec![0.0f32; num_train * 784];
 
     let total_start = Instant::now();
@@ -107,13 +99,11 @@ fn main() {
         let epoch_start = Instant::now();
         shuffle_indices(&mut indices);
 
-        // Gera dataset augmentado na CPU (exatamente como CPU faz)
         let aug_start = Instant::now();
         train_images_augmented =
             generate_augmented_dataset(&train_images, num_train, augment_p_keep, epoch as u64);
         let aug_time = aug_start.elapsed();
 
-        // Copia dataset augmentado para GPU
         let train_images_gpu = dev
             .htod_sync_copy(&train_images_augmented)
             .expect("Falha ao copiar augmented");
@@ -128,7 +118,6 @@ fn main() {
         for batch_start in (0..num_train).step_by(BATCH_SIZE) {
             let bs = (batch_start + BATCH_SIZE).min(num_train) - batch_start;
 
-            // Copia índices CPU -> GPU
             for i in 0..bs {
                 batch_indices_cpu[i] = indices[batch_start + i] as i32;
             }
@@ -138,7 +127,6 @@ fn main() {
             )
             .expect("Falha copiar indices");
 
-            // Copia batch augmentado da CPU para GPU
             let mut batch_cpu = vec![0.0f32; bs * 784];
             for i in 0..bs {
                 let idx = indices[batch_start + i];
@@ -148,7 +136,6 @@ fn main() {
             dev.htod_sync_copy_into(&batch_cpu, &mut batch_input.slice_mut(0..bs * 784))
                 .expect("Falha copiar batch");
 
-            // Gather labels na GPU
             launch_gather_labels(
                 &kernels.gather_labels,
                 &train_labels_gpu.slice(0..train_labels_gpu.len()),
@@ -158,7 +145,6 @@ fn main() {
             )
             .expect("Falha gather labels");
 
-            // Forward
             let dev_input = batch_input.slice(0..bs * 784);
             mlp.forward_batch(
                 &dev_input,
@@ -171,11 +157,9 @@ fn main() {
             )
             .expect("Falha forward");
 
-            // Métricas na GPU
             let a_last = cache.a_offsets[mlp.dims.len()];
             let probs = cache.activations.slice(a_last..a_last + bs * 10);
 
-            // Count correct
             dev.memset_zeros(&mut correct_gpu).expect("memset");
             launch_count_correct(
                 &kernels.count_correct,
@@ -188,7 +172,6 @@ fn main() {
             let correct_host = dev.dtoh_sync_copy(&correct_gpu.slice(0..1)).expect("dtoh");
             correct += correct_host[0] as usize;
 
-            // Compute loss
             dev.memset_zeros(&mut loss_gpu).expect("memset");
             launch_compute_loss(
                 &kernels.compute_loss,
@@ -203,7 +186,6 @@ fn main() {
             epoch_loss += loss_host[0];
             total += bs;
 
-            // Backward
             acc_grads.zero().expect("Falha zero grads");
             mlp.backward_batch(
                 &mut cache,
@@ -216,7 +198,6 @@ fn main() {
             )
             .expect("Falha backward");
 
-            // Adam
             let step_lr = scheduler.step();
             adam_update(&mut mlp, &mut acc_grads, &mut adam, step_lr, &kernels)
                 .expect("Falha adam");
@@ -224,7 +205,6 @@ fn main() {
 
         let train_time = epoch_start.elapsed();
 
-        // Eval no teste
         let eval_start = Instant::now();
         let mut test_correct = 0usize;
         let mut test_loss = 0.0f32;
@@ -238,7 +218,6 @@ fn main() {
         for chunk_start in (0..num_test).step_by(BATCH_SIZE) {
             let bs = (chunk_start + BATCH_SIZE).min(num_test) - chunk_start;
 
-            // Índices sequenciais para teste
             for i in 0..bs {
                 batch_indices_cpu[i] = (chunk_start + i) as i32;
             }
@@ -248,7 +227,6 @@ fn main() {
             )
             .expect("Falha copiar indices eval");
 
-            // Gather imagens de teste (sem augmentation)
             launch_gather_and_augment(
                 &kernels.gather_and_augment,
                 &test_images_gpu.slice(0..test_images_gpu.len()),
@@ -260,7 +238,6 @@ fn main() {
             )
             .expect("Falha gather eval");
 
-            // Gather labels
             launch_gather_labels(
                 &kernels.gather_labels,
                 &test_labels_gpu.slice(0..test_labels_gpu.len()),
@@ -277,7 +254,6 @@ fn main() {
             let a_last = eval_cache.a_offsets[mlp.dims.len()];
             let probs = eval_cache.activations.slice(a_last..a_last + bs * 10);
 
-            // Count correct
             dev.memset_zeros(&mut correct_gpu).expect("memset");
             launch_count_correct(
                 &kernels.count_correct,
@@ -290,7 +266,6 @@ fn main() {
             let correct_host = dev.dtoh_sync_copy(&correct_gpu.slice(0..1)).expect("dtoh");
             test_correct += correct_host[0] as usize;
 
-            // Loss
             dev.memset_zeros(&mut loss_gpu).expect("memset");
             launch_compute_loss(
                 &kernels.compute_loss,

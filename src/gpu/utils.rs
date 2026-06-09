@@ -24,30 +24,25 @@ pub fn evaluate_batch(
     let mut correct = 0usize;
     let mut total_loss = 0.0f32;
 
-    // Alocar buffer na GPU para targets (i32)
     let mut batch_targets_host = vec![0i32; eval_bs];
     let mut batch_targets = dev.alloc_zeros::<i32>(eval_bs)?;
 
     for chunk_start in (0..num_images).step_by(eval_bs) {
         let bs = (chunk_start + eval_bs).min(num_images) - chunk_start;
 
-        // Copiar imagens para GPU
         let host_slice = &images[chunk_start * 784..(chunk_start + bs) * 784];
         let mut dev_slice = batch_input.slice_mut(0..bs * 784);
         dev.htod_sync_copy_into(host_slice, &mut dev_slice)?;
 
-        // Copiar labels para GPU (como i32)
         for i in 0..bs {
             batch_targets_host[i] = labels[chunk_start + i] as i32;
         }
         let mut dev_targets = batch_targets.slice_mut(0..bs);
         dev.htod_sync_copy_into(&batch_targets_host[..bs], &mut dev_targets)?;
 
-        // Forward
         let dev_input = batch_input.slice(0..bs * 784);
         mlp.forward_batch(&dev_input, &mut cache, bs, false, kernels, blas, 1.0)?;
 
-        // Copiar resultados de volta para CPU
         let a_last_off = cache.a_offsets[mlp.dims.len()];
         let probs_host = dev.dtoh_sync_copy(
             &cache

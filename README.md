@@ -69,7 +69,11 @@ Para propagar o erro à camada anterior, a fórmula é `Delta_prev = Delta_next 
 
 Com um pouco de estudo, desenhando os shapes no papel e acompanhando passo a passo com exemplos numéricos pequenos, consegui montar uma esquemática de como o backpropagation funcionava na minha cabeça. Depois que isso clicou, a rede passou a treinar.
 
-Ou quase. Antes mesmo de conseguir ver a acurácia subir, tive um obstáculo chato logo na primeira vez: inicializei os pesos aleatórios de forma muito negativa. Como a minha ativação nas camadas ocultas era a ReLU (que zera qualquer valor negativo), a rede sofreu do famoso problema da "dying ReLU". Os sinais negativos zeravam as saídas, os gradientes ficavam zerados no backpropagation, e a rede inteira "morria" na primeira camada sem aprender nada. Tive que pesquisar e implementar a *He Initialization* (ou inicialização de Kaiming), que ajusta o desvio padrão da aleatoriedade matematicamente de acordo com o número de neurônios de entrada (`sqrt(2.0 / n_in)`). Só com esse cuidado a rede passou a aprender corretamente.
+### O problema da "Dying ReLU"
+
+Antes mesmo de ver a acurácia subir, tive um obstáculo chato logo na primeira tentativa: inicializei os pesos aleatórios de forma muito negativa. Como a ativação nas camadas ocultas era a ReLU (que zera qualquer valor negativo), a rede sofreu do famoso problema da **"dying ReLU"**. Os sinais negativos zeravam as saídas, os gradientes ficavam zerados no backpropagation, e a rede inteira "morria" na primeira camada sem aprender nada.
+
+Tive que pesquisar e implementar a **He Initialization** (ou inicialização de Kaiming), que ajusta o desvio padrão da aleatoriedade matematicamente de acordo com o número de neurônios de entrada (`sqrt(2.0 / n_in)`). Só com esse cuidado a rede passou a aprender corretamente.
 
 ### Primeiro resultado funcional
 
@@ -139,7 +143,7 @@ Usei também do bloco `unsafe` do Rust para algumas operações de otimizações
 
 ### f64 → f32: quantização
 
-Fiz alguns testes e vi que `f64` tinha um comportamento praticamente igual ao `f32` durante o treinamento da rede neural. Ou seja, as 32 casas decimais de precisão do `f64` eram meio que inúteis para os gradientes, já que o ruído intrínseco do SGD (devido à amostragem aleatória de batches) é ordens de magnitude maior que o erro de arredondamento do `f32`. Ter 15 casas decimais de precisão ao invés de 7 não trazia benefício prático nenhum.
+Fiz alguns testes e vi que `f64` tinha um comportamento praticamente igual ao `f32` durante o treinamento da rede neural. Ou seja, as  casas decimais a mais  de precisão do `f64` eram meio que inúteis para os gradientes, já que o ruído intrínseco do SGD (devido à amostragem aleatória de batches) é ordens de magnitude maior que o erro de arredondamento do `f32`. Ter 15 casas decimais de precisão ao invés de 7 não trazia benefício prático nenhum.
 
 Isso otimizou muito, ainda mais por conta do SIMD: como o registrador AVX2 é de 256 bits, com `f64` (que ocupa 64 bits cada) eu só conseguia colocar 4 floats por vez. Agora com `f32` (que ocupa 32 bits cada), eu posso colocar até 8 floats, meio que duplicando a velocidade de fazer contas. Além disso, `f32` ocupa metade da memória, o que significa que cabe o dobro de dados no cache L1, reduzindo ainda mais os cache misses.
 
@@ -155,7 +159,7 @@ Isso foi muito importante, porque um dos limitantes para eu alcançar maiores ta
 
 ### Busca pela acurácia máxima
 
-Eu procurei o recorde mundial de MNIST usando MLP puro. Em um artigo da Universidade de Tokyo de 2015(https://arxiv.org/pdf/1505.03229), eles alcançaram 99.77% de acurácia usando uma rede massiva com técnicas avançadas de regularização. Procurei repetir os passos deles e usei coisas parecidas.
+Eu procurei o recorde mundial de MNIST usando MLP puro. Em um artigo da Universidade de Tokyo de 2015(https://arxiv.org/pdf/1505.03229), eles alcançaram 99.74% de acurácia usando uma rede massiva com técnicas avançadas de regularização. Procurei repetir os passos deles e usei coisas parecidas.
 
 Usei como otimizador o Adam (ou melhor, o **AdamW**). Eu extraí a penalidade L2 da fração de momento e apliquei o *Weight Decay* diretamente no passo de update dos pesos, o que melhora consideravelmente a capacidade da rede de generalizar. Junto com ele, usei o OneCycleLR como scheduler, para mudar o learning rate dinamicamente em tempos diferentes do treinamento, que começa baixo, sobe até um pico e depois decai suavemente. E para evitar overfitting numa rede tão grande, adicionei **Inverted Dropout** (também operando incrivelmente rápido via máscaras SIMD), onde 10% dos neurônios eram desativados no treino, mas os neurônios sobreviventes recebiam um *scaling* matemático compensatório para não onerar a performance da inferência depois.
 
@@ -169,7 +173,7 @@ Um detalhe muito legal é que isso era perfeitamente visível nos logs: nas últ
 
 Para aguentar a complexidade do Data Augmentation, escalei a rede para `[784, 2048, 1024, 10]`, contando com 2048 neurônios na primeira camada oculta. Uma rede pequena não teria capacidade suficiente para aprender com imagens tão distorcidas.
 
-Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.58%**, bem próximo do recorde mundial de 99.77%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
+Tudo isso, com um ajuste fino de hiperparâmetros e 300 épocas de treinamento, me renderam **99.58%**, bem próximo do recorde mundial de 99.74%. Porém, lembrando: no recorde mundial eles usaram 15.000 épocas, contra 300 do meu. A diferença de 0.19% provavelmente se fecha com mais épocas e mais augmentations, mas o resultado já está muito próximo.
 
 ![Resultado Final - Acurácia 99.58%](assets/Screenshot_2026-06-06-174033.png)
 
