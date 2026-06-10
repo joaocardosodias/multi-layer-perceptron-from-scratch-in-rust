@@ -129,44 +129,39 @@ python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('t10k-labels-idx1-u
 
 ### 4. Compilar e rodar
 
-| Backend | Plataforma | Comando |
-|:---|:---|:---|
-| **Intel MKL** | Linux / Windows | `cargo run --bin mlp-cpu --release --features mkl` |
-| **OpenBLAS** | Linux / Windows / macOS | `cargo run --bin mlp-cpu --release --features openblas` |
-| **Accelerate** | Apple Silicon (macOS) | `cargo run --bin mlp-cpu --release --features accelerate` |
-| **CUDA** | NVIDIA GPU | `cargo run --bin mlp-gpu --release --features gpu` |
+#### CPU (escolha o BLAS)
 
-#### Parâmetros de linha de comando
+| Backend | Comando |
+|:---|:---|
+| **Intel MKL** (padrão) | `cargo run --bin mlp-cpu --release` |
+| **OpenBLAS** | `cargo run --bin mlp-cpu --release --features openblas` |
+| **Accelerate** (Apple Silicon) | `cargo run --bin mlp-cpu --release --features accelerate` |
 
-Todos os binários aceitam parâmetros via CLI (os valores padrão são usados se não especificados):
+#### GPU (NVIDIA CUDA)
 
 ```bash
-cargo run --bin mlp-cpu --release --features mkl -- \
-    --epochs 300 \
-    --batch-size 256 \
-    --learning-rate 0.003 \
-    --augment-p-keep 0.85 \
-    --dropout-keep 0.9 \
-    --weight-decay 0.0001 \
-    --arch "784,2048,1024,10"
+cargo run --bin mlp-gpu --release
 ```
 
-| Parâmetro | Padrão | Descrição |
-|:---|:---|:---|
-| `--epochs` | `300` | Número de épocas de treinamento |
-| `--batch-size` | `256` | Tamanho do batch |
-| `--learning-rate` | `0.003` | Taxa de aprendizado máxima |
-| `--augment-p-keep` | `0.85` | Probabilidade de aplicar augmentation |
-| `--dropout-keep` | `0.9` | Probabilidade de manter neurônio (1 - dropout rate) |
-| `--weight-decay` | `0.0001` | Penalidade L2 (weight decay) |
-| `--arch` | `"784,2048,1024,10"` | Arquitetura da rede (separado por vírgulas) |
+#### Com gráfico automático
+
+Adicione `--features auto-plot` para gerar gráfico ao final do treino:
+
+```bash
+# CPU
+cargo run --bin mlp-cpu --release --features auto-plot
+
+# GPU
+cargo run --bin mlp-gpu --release --features auto-plot
+```
 
 #### Parâmetros de linha de comando
 
 Todos os binários aceitam parâmetros via CLI (os valores padrão são usados se não especificados):
 
 ```bash
-cargo run --bin mlp-cpu --release --features mkl -- \
+# CPU
+cargo run --bin mlp-cpu --release -- \
     --epochs 300 \
     --batch-size 256 \
     --learning-rate 0.003 \
@@ -174,6 +169,12 @@ cargo run --bin mlp-cpu --release --features mkl -- \
     --dropout-keep 0.9 \
     --weight-decay 0.0001 \
     --arch "784,2048,1024,10"
+
+# GPU
+cargo run --bin mlp-gpu --release -- \
+    --epochs 300 \
+    --batch-size 256 \
+    --learning-rate 0.003
 ```
 
 | Parâmetro | Padrão | Descrição |
@@ -191,7 +192,11 @@ cargo run --bin mlp-cpu --release --features mkl -- \
 Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
 
 ```bash
-cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+# CPU
+cargo run --bin mlp-cpu --release --features auto-plot
+
+# GPU
+cargo run --bin mlp-gpu --release --features auto-plot
 ```
 
 Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
@@ -206,16 +211,18 @@ chmod +x experiments/run_comparison.sh
 ./experiments/run_comparison.sh
 
 # Ou manualmente (com gráfico automático):
-ARCH="784,2048,1024,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+cargo run --bin mlp-cpu --release --features auto-plot -- \
+    --arch "784,2048,1024,10"
 mv training_log.csv experiments/output/run1.csv
 mv training_plot.png experiments/output/run1_plot.png
 
-ARCH="784,128,64,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+cargo run --bin mlp-cpu --release --features auto-plot -- \
+    --arch "784,128,64,10"
 mv training_log.csv experiments/output/run2.csv
 mv training_plot.png experiments/output/run2_plot.png
 
 # Gerar gráfico de comparação entre runs
-cargo run --bin plot --features auto-plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
+cargo run --bin plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
 ```
 O gráfico será salvo em `experiments/output/comparison_plot.png`.
 
