@@ -5,6 +5,7 @@ mod network;
 mod optimizers;
 mod utils;
 
+use clap::Parser;
 use cudarc::driver::{CudaDevice, DeviceSlice};
 use std::time::Instant;
 
@@ -18,16 +19,46 @@ use mlp::common::data::{load_images, load_labels};
 use network::{BatchCache, Gradients, MLP};
 use optimizers::{AdamState, OneCycleLR, adam_update};
 
-fn main() {
-    const BATCH_SIZE: usize = 256;
-    const EPOCHS: usize = 2500;
-    const LABEL_SMOOTHING: f32 = 0.0;
-    const MAX_LR: f32 = 3e-3;
-    const AUGMENT_P_KEEP: f32 = 0.85;
-    const DROPOUT_KEEP: f32 = 0.9;
+#[derive(Parser)]
+#[command(name = "mlp-gpu", about = "MLP Trainer using NVIDIA GPU with CUDA")]
+struct Cli {
+    #[arg(long, default_value_t = 300)]
+    epochs: usize,
 
+    #[arg(long, default_value_t = 256)]
+    batch_size: usize,
+
+    #[arg(long, default_value_t = 3e-3)]
+    learning_rate: f32,
+
+    #[arg(long, default_value_t = 0.85)]
+    augment_p_keep: f32,
+
+    #[arg(long, default_value_t = 0.9)]
+    dropout_keep: f32,
+
+    #[arg(long, default_value_t = 1e-4)]
+    weight_decay: f32,
+
+    #[arg(long, default_value_t = 0.0)]
+    label_smoothing: f32,
+
+    #[arg(long)]
+    arch: Option<String>,
+}
+
+fn main() {
+    let args = Cli::parse();
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
     println!("GPU: {:?}", dev);
+
+    let arch_str = args.arch.clone().unwrap_or("784,2048,1024,10".to_string());
+    let architecture: Vec<usize> = arch_str
+        .split(',')
+        .map(|s| s.parse().expect("Arquitetura inválida"))
+        .collect();
+    println!("Arquitetura: {:?}", architecture);
+    println!("Épocas: {} | Batch: {} | LR: {:.1e}", args.epochs, args.batch_size, args.learning_rate);
 
     let (train_images, num_train) =
         load_images("src/data/train-images-idx3-ubyte/train-images.idx3-ubyte");
@@ -43,27 +74,34 @@ fn main() {
         .htod_sync_copy(&test_labels.iter().map(|&x| x as i32).collect::<Vec<_>>())
         .expect("Falha ao copiar labels de teste");
 
-    let mut mlp = MLP::new(&dev, &[784, 2048, 1024, 10]).expect("Falha ao criar MLP");
+    let mut mlp = MLP::new(&dev, &architecture).expect("Falha ao criar MLP");
     let blas = BlasHandle::new(dev.clone()).expect("Falha ao criar cuBLAS");
     let kernels = Kernels::new(&dev).expect("Falha ao compilar kernels");
 
+    let batch_size = args.batch_size;
+    let epochs = args.epochs;
+    let augment_p_keep = args.augment_p_keep;
+    let dropout_keep = args.dropout_keep;
+    let label_smoothing = args.label_smoothing;
+    let max_lr = args.learning_rate;
+
     let mut batch_input = dev
-        .alloc_zeros::<f32>(BATCH_SIZE * 784)
+        .alloc_zeros::<f32>(batch_size * 784)
         .expect("Falha alloc batch");
     let mut batch_labels = dev
-        .alloc_zeros::<i32>(BATCH_SIZE)
+        .alloc_zeros::<i32>(batch_size)
         .expect("Falha alloc labels");
     let mut batch_indices = dev
-        .alloc_zeros::<i32>(BATCH_SIZE)
+        .alloc_zeros::<i32>(batch_size)
         .expect("Falha alloc indices");
-    let mut batch_indices_cpu = vec![0i32; BATCH_SIZE];
+    let mut batch_indices_cpu = vec![0i32; batch_size];
     let mut indices: Vec<usize> = (0..num_train).collect();
 
     let mut correct_gpu = dev.alloc_zeros::<i32>(1).expect("Falha alloc correct");
     let mut loss_gpu = dev.alloc_zeros::<f32>(1).expect("Falha alloc loss");
 
-    let mut cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha cache");
-    let mut eval_cache = BatchCache::new(&dev, &mlp.dims, BATCH_SIZE).expect("Falha eval cache");
+    let mut cache = BatchCache::new(&dev, &mlp.dims, batch_size).expect("Falha cache");
+    let mut eval_cache = BatchCache::new(&dev, &mlp.dims, batch_size).expect("Falha eval cache");
 
     let mut adam = AdamState::new(&dev, &mlp).expect("Falha Adam");
     let mut acc_grads = Gradients::new(&dev, &mlp).expect("Falha Grads");
@@ -74,19 +112,19 @@ fn main() {
     let mut best_test_acc = 0.0f32;
     let mut best_epoch = 0;
 
-    let num_batches = (num_train + BATCH_SIZE - 1) / BATCH_SIZE;
+    let num_batches = (num_train + args.batch_size - 1) / args.batch_size;
     let grad_accum = 8usize;
     let num_super_chunks = (num_batches + grad_accum - 1) / grad_accum;
-    let total_steps = EPOCHS * num_super_chunks;
-    let mut scheduler = OneCycleLR::new(total_steps, MAX_LR);
+    let total_steps = args.epochs * num_super_chunks;
+    let mut scheduler = OneCycleLR::new(total_steps, args.learning_rate);
 
-    for epoch in 0..EPOCHS {
+    for epoch in 0..args.epochs {
         let epoch_start = Instant::now();
         shuffle_indices(&mut indices);
 
         let aug_start = Instant::now();
         train_images_augmented =
-            generate_augmented_dataset(&train_images, num_train, AUGMENT_P_KEEP, epoch as u64);
+            generate_augmented_dataset(&train_images, num_train, args.augment_p_keep, epoch as u64);
         let aug_time = aug_start.elapsed();
 
         let train_images_gpu = dev
@@ -104,8 +142,8 @@ fn main() {
 
         acc_grads.zero().expect("Falha zero grads");
 
-        for batch_start in (0..num_train).step_by(BATCH_SIZE) {
-            let bs = (batch_start + BATCH_SIZE).min(num_train) - batch_start;
+        for batch_start in (0..num_train).step_by(args.batch_size) {
+            let bs = (batch_start + args.batch_size).min(num_train) - batch_start;
 
             for i in 0..bs {
                 batch_indices_cpu[i] = indices[batch_start + i] as i32;
@@ -142,7 +180,7 @@ fn main() {
                 true,
                 &kernels,
                 &blas,
-                DROPOUT_KEEP,
+                args.dropout_keep,
             )
             .expect("Falha forward");
 
@@ -182,7 +220,7 @@ fn main() {
                 bs,
                 &kernels,
                 &blas,
-                LABEL_SMOOTHING,
+                args.label_smoothing,
             )
             .expect("Falha backward");
 
@@ -201,14 +239,14 @@ fn main() {
         let mut test_correct = 0usize;
         let mut test_loss = 0.0f32;
         let mut batch_input_eval = dev
-            .alloc_zeros::<f32>(BATCH_SIZE * 784)
+            .alloc_zeros::<f32>(args.batch_size * 784)
             .expect("Falha alloc eval");
         let mut batch_labels_eval = dev
-            .alloc_zeros::<i32>(BATCH_SIZE)
+            .alloc_zeros::<i32>(args.batch_size)
             .expect("Falha alloc eval labels");
 
-        for chunk_start in (0..num_test).step_by(BATCH_SIZE) {
-            let bs = (chunk_start + BATCH_SIZE).min(num_test) - chunk_start;
+        for chunk_start in (0..num_test).step_by(args.batch_size) {
+            let bs = (chunk_start + args.batch_size).min(num_test) - chunk_start;
 
             for i in 0..bs {
                 batch_indices_cpu[i] = (chunk_start + i) as i32;
@@ -279,7 +317,7 @@ fn main() {
         println!(
             "Epoca {}/{} | Loss: {:.4} | Acc: {:.2}% | Test Acc: {:.2}% | Test Loss: {:.4} | Aug: {:.2}s",
             epoch + 1,
-            EPOCHS,
+            args.epochs,
             epoch_loss / total as f32,
             100.0 * correct as f32 / total as f32,
             100.0 * test_acc,

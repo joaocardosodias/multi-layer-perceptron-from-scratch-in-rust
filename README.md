@@ -4,77 +4,9 @@
 
 ---
 
+## Como rodar
 
-
-### Organização do repositório
-
-```
-src/
-├── common/          # Código compartilhado (data loader, losses, augmentation)
-│   ├── data.rs
-│   ├── losses.rs
-│   ├── augment.rs
-│   └── mod.rs
-├── cpu/             # Versão CPU (MKL / OpenBLAS / Accelerate)
-│   ├── main.rs      # Entry point CPU
-│   ├── network.rs   # MLP com BLAS
-│   ├── optimizers.rs
-│   └── utils.rs
-├── gpu/             # Versão GPU (NVIDIA CUDA)
-│   ├── main.rs      # Entry point GPU
-│   ├── network.rs   # MLP com cuBLAS
-│   ├── kernels.rs   # Kernels CUDA customizados
-│   ├── optimizers.rs
-│   ├── linalg.rs
-│   └── utils.rs
-├── bin/
-│   └── plot.rs      # Gerador de gráficos de comparação (100% Rust)
-├── experiments/
-│   ├── run_comparison.sh  # Script para rodar experimentos comparativos
-│   └── output/            # Resultados dos experimentos (CSVs e gráficos)
-└── lib.rs           # Biblioteca compartilhada
-```
-
-### Experimentos e Comparação
-
-Para comparar diferentes configurações (arquiteturas, learning rates, etc):
-
-```bash
-# Rodar script de comparação automática
-chmod +x experiments/run_comparison.sh
-./experiments/run_comparison.sh
-
-# Ou manualmente (com gráfico automático):
-ARCH="784,2048,1024,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
-mv training_log.csv experiments/output/run1.csv
-mv training_plot.png experiments/output/run1_plot.png
-
-ARCH="784,128,64,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
-mv training_log.csv experiments/output/run2.csv
-mv training_plot.png experiments/output/run2_plot.png
-
-# Gerar gráfico de comparação entre runs
-cargo run --bin plot --features auto-plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
-```
-
-O gráfico será salvo em `experiments/output/comparison_plot.png`.
-
-| Backend | Plataforma | Comando |
-|:---|:---|:---|
-| **Intel MKL** | Linux / Windows | `cargo run --bin mlp-cpu --release --features mkl` |
-| **OpenBLAS** | Linux / Windows / macOS | `cargo run --bin mlp-cpu --release --features openblas` |
-| **Accelerate** | Apple Silicon (macOS) | `cargo run --bin mlp-cpu --release --features accelerate` |
-| **CUDA** | NVIDIA GPU | `cargo run --bin mlp-gpu --release --features gpu` |
-
-### Gerar gráfico automaticamente
-
-Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
-
-```bash
-cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
-```
-
-Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
+### 1. Instalar Rust
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -197,69 +129,136 @@ python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('t10k-labels-idx1-u
 
 ### 4. Compilar e rodar
 
-#### Versão CPU (BLAS)
+| Backend | Plataforma | Comando |
+|:---|:---|:---|
+| **Intel MKL** | Linux / Windows | `cargo run --bin mlp-cpu --release --features mkl` |
+| **OpenBLAS** | Linux / Windows / macOS | `cargo run --bin mlp-cpu --release --features openblas` |
+| **Accelerate** | Apple Silicon (macOS) | `cargo run --bin mlp-cpu --release --features accelerate` |
+| **CUDA** | NVIDIA GPU | `cargo run --bin mlp-gpu --release --features gpu` |
 
-**Intel (MKL):**
+#### Parâmetros de linha de comando
+
+Todos os binários aceitam parâmetros via CLI (os valores padrão são usados se não especificados):
+
 ```bash
-cargo run --bin mlp-cpu --release --features mkl
+cargo run --bin mlp-cpu --release --features mkl -- \
+    --epochs 300 \
+    --batch-size 256 \
+    --learning-rate 0.003 \
+    --augment-p-keep 0.85 \
+    --dropout-keep 0.9 \
+    --weight-decay 0.0001 \
+    --arch "784,2048,1024,10"
 ```
 
-**AMD / Genérico (OpenBLAS):**
+| Parâmetro | Padrão | Descrição |
+|:---|:---|:---|
+| `--epochs` | `300` | Número de épocas de treinamento |
+| `--batch-size` | `256` | Tamanho do batch |
+| `--learning-rate` | `0.003` | Taxa de aprendizado máxima |
+| `--augment-p-keep` | `0.85` | Probabilidade de aplicar augmentation |
+| `--dropout-keep` | `0.9` | Probabilidade de manter neurônio (1 - dropout rate) |
+| `--weight-decay` | `0.0001` | Penalidade L2 (weight decay) |
+| `--arch` | `"784,2048,1024,10"` | Arquitetura da rede (separado por vírgulas) |
+
+#### Parâmetros de linha de comando
+
+Todos os binários aceitam parâmetros via CLI (os valores padrão são usados se não especificados):
+
 ```bash
-# Instalar OpenBLAS primeiro:
-# Arch: sudo pacman -S openblas
-# Ubuntu: sudo apt install libopenblas-dev
-# macOS: brew install openblas
-
-cargo run --bin mlp-cpu --release --features openblas
+cargo run --bin mlp-cpu --release --features mkl -- \
+    --epochs 300 \
+    --batch-size 256 \
+    --learning-rate 0.003 \
+    --augment-p-keep 0.85 \
+    --dropout-keep 0.9 \
+    --weight-decay 0.0001 \
+    --arch "784,2048,1024,10"
 ```
 
-**Apple Silicon (Accelerate):**
+| Parâmetro | Padrão | Descrição |
+|:---|:---|:---|
+| `--epochs` | `300` | Número de épocas de treinamento |
+| `--batch-size` | `256` | Tamanho do batch |
+| `--learning-rate` | `0.003` | Taxa de aprendizado máxima |
+| `--augment-p-keep` | `0.85` | Probabilidade de aplicar augmentation |
+| `--dropout-keep` | `0.9` | Probabilidade de manter neurônio (1 - dropout rate) |
+| `--weight-decay` | `0.0001` | Penalidade L2 (weight decay) |
+| `--arch` | `"784,2048,1024,10"` | Arquitetura da rede (separado por vírgulas) |
+
+### 5. Gerar gráfico automaticamente
+
+Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
+
 ```bash
-cargo run --bin mlp-cpu --release --features accelerate
+cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
 ```
 
-#### Versão GPU (NVIDIA CUDA)
+Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
 
-**Linux:**
+### 6. Experimentos e Comparação
+
+Para comparar diferentes configurações (arquiteturas, learning rates, etc):
+
 ```bash
-cargo run --bin mlp-gpu --release
+# Rodar script de comparação automática
+chmod +x experiments/run_comparison.sh
+./experiments/run_comparison.sh
+
+# Ou manualmente (com gráfico automático):
+ARCH="784,2048,1024,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+mv training_log.csv experiments/output/run1.csv
+mv training_plot.png experiments/output/run1_plot.png
+
+ARCH="784,128,64,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+mv training_log.csv experiments/output/run2.csv
+mv training_plot.png experiments/output/run2_plot.png
+
+# Gerar gráfico de comparação entre runs
+cargo run --bin plot --features auto-plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
+```
+O gráfico será salvo em `experiments/output/comparison_plot.png`.
+
+---
+
+## Organização do repositório
+
+```
+src/
+├── common/          # Código compartilhado (data loader, losses, augmentation)
+│   ├── data.rs
+│   ├── losses.rs
+│   ├── augment.rs
+│   └── mod.rs
+├── cpu/             # Versão CPU (MKL / OpenBLAS / Accelerate)
+│   ├── main.rs      # Entry point CPU
+│   ├── network.rs   # MLP com BLAS
+│   ├── optimizers.rs
+│   └── utils.rs
+├── gpu/             # Versão GPU (NVIDIA CUDA)
+│   ├── main.rs      # Entry point GPU
+│   ├── network.rs   # MLP com cuBLAS
+│   ├── kernels.rs   # Kernels CUDA customizados
+│   ├── optimizers.rs
+│   ├── linalg.rs
+│   └── utils.rs
+├── bin/
+│   └── plot.rs      # Gerador de gráficos de comparação (100% Rust)
+├── experiments/
+│   ├── run_comparison.sh  # Script para rodar experimentos comparativos
+│   └── output/            # Resultados dos experimentos (CSVs e gráficos)
+└── lib.rs           # Biblioteca compartilhada
 ```
 
-**Windows (PowerShell):**
-```powershell
-# Configurar variáveis de ambiente do CUDA
-# (ajuste o caminho conforme sua instalação)
-$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x"
-$env:PATH = "$env:CUDA_PATH\bin;$env:PATH"
-$env:LIB = "$env:CUDA_PATH\lib\x64;$env:LIB"
-$env:INCLUDE = "$env:CUDA_PATH\include;$env:INCLUDE"
+---
 
-# Verificar se a GPU está disponível
-nvidia-smi
-
-# Compilar e rodar
-cargo run --bin mlp-gpu --release
-```
-
-### Portabilidade CPU
+## Portabilidade CPU
 
 > **Nota:** Este projeto foi originalmente desenvolvido e otimizado especificamente para **Intel MKL**. Posteriormente, adicionei suporte a **OpenBLAS** (para CPUs AMD e Intel genéricas) e **Accelerate** (para Apple Silicon).
 >
 > **Testado em:** Intel MKL e OpenBLAS (funcionam perfeitamente no meu PC com Intel Core i5-1345u).
 >
 > **Não testado:** Apple Accelerate (não tenho um Mac para testar, mas a implementação segue a API padrão do cblas-sys e deve funcionar).
-
----
-
-## Arquitetura
-
-| Componente | Detalhe |
-|:---|:---|
-| **Topologia** | `[784, 2048, 1024, 10]` |
-| **Ativações** | `ReLU` (ocultas) e `Softmax` (saída) |
-| **Otimizador** | Adam com `OneCycleLR` |
-| **Data Augmentation** | rotação, translação, distorção elástica, blur |
 
 ---
 
@@ -294,6 +293,23 @@ cargo run --bin mlp-gpu --release
 ## Decisões e dificuldades
 
 ### Carregamento dos dados do MNIST
+
+A primeira coisa que eu precisei resolver antes de qualquer outra coisa foi carregar os dados do MNIST.
+
+| Métrica | Valor |
+|:---|:---|
+| **Acurácia Final** | **99.63%** no conjunto de teste |
+| **Tempo total** | ~19.3 minutos para 2500 épocas |
+| **Acesso** | GPU do laboratório via SSH, usando CUDA para paralelização massiva |
+
+### Comparativo de experimentos
+
+| Experimento | Hardware | Épocas | Tempo | Acurácia | Notas |
+|:---|:---|:---:|:---|:---:|:---|
+| **V1 (Ingênua)** | CPU | 25 | **23 min 13 s** | 97.09% | `Vec<Vec<T>>`, loops escalares, alocações excessivas |
+| **V2 (Otimizada)** | CPU | 25 | **8.74 s** | 97.09% | Flat memory, AVX2, Rayon, f32, cache blocking. Ganho de **157x** |
+| **V3 (SOTA)** | CPU | 300 | ~**12.25 min** | **99.60%** | Data Augmentation, Adam + OneCycleLR |
+| **V4 (GPU)** | GPU | 300 | **~84 s** | **99.63%** | CUDA + cuBLAS, gradient accumulation, mesmo augmentation da CPU |
 
 A primeira coisa que eu precisei resolver antes de qualquer outra coisa foi carregar os dados do MNIST. O formato IDX é um formato binário relativamente simples, mas tem uma estrutura específica que precisa ser respeitada rigorosamente, senão os dados saem completamente errados. O arquivo começa com um magic number de 4 bytes que identifica o tipo de dado que está sendo lido (se são imagens ou se são labels), seguido pelo número total de itens no arquivo, número de linhas por imagem e número de colunas por imagem. Todos esses valores estão armazenados em big-endian, o que significa que o byte mais significativo vem primeiro, e é preciso usar `u32::from_be_bytes` para converter corretamente.
 

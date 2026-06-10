@@ -3,6 +3,7 @@ mod network;
 mod optimizers;
 mod utils;
 
+use clap::Parser;
 use mlp::common::data::{load_images, load_labels};
 use mlp::common::losses::cross_entropy;
 use network::{BatchCache, Gradients, MLP};
@@ -12,7 +13,37 @@ use rayon::prelude::*;
 use std::time::Instant;
 use utils::*;
 
+#[derive(Parser)]
+#[command(name = "mlp-cpu", about = "MLP Trainer using CPU with BLAS")]
+struct Cli {
+    #[arg(long, default_value_t = 300)]
+    epochs: usize,
+
+    #[arg(long, default_value_t = 256)]
+    batch_size: usize,
+
+    #[arg(long, default_value_t = 3e-3)]
+    learning_rate: f32,
+
+    #[arg(long, default_value_t = 0.85)]
+    augment_p_keep: f32,
+
+    #[arg(long, default_value_t = 0.9)]
+    dropout_keep: f32,
+
+    #[arg(long, default_value_t = 1e-4)]
+    weight_decay: f32,
+
+    #[arg(long, default_value_t = 0.0)]
+    label_smoothing: f32,
+
+    #[arg(long)]
+    arch: Option<String>,
+}
+
 fn main() {
+    let args = Cli::parse();
+
     unsafe {
         std::env::set_var("MKL_NUM_THREADS", "1");
         std::env::set_var("OMP_NUM_THREADS", "1");
@@ -31,18 +62,19 @@ fn main() {
         num_train, num_test, num_threads
     );
 
-    // Ler arquitetura da variável de ambiente ou usar padrão
-    let arch_str = std::env::var("ARCH").unwrap_or("784,2048,1024,10".to_string());
+    // Ler arquitetura do argumento ou usar padrão
+    let arch_str = args.arch.clone().unwrap_or("784,2048,1024,10".to_string());
     let architecture: Vec<usize> = arch_str
         .split(',')
         .map(|s| s.parse().expect("Arquitetura inválida"))
         .collect();
     println!("Arquitetura: {:?}", architecture);
+    println!("Épocas: {} | Batch: {} | LR: {:.1e}", args.epochs, args.batch_size, args.learning_rate);
 
     let mut mlp = MLP::new(&architecture);
 
-    let batch_size = 256;
-    let epochs = 10;
+    let batch_size = args.batch_size;
+    let epochs = args.epochs;
 
     let mut adam = AdamState::new(&mlp);
     let mut acc_grads = Gradients::new(&mlp);
