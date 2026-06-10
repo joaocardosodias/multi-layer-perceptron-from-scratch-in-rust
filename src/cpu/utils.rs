@@ -132,59 +132,6 @@ pub fn confusion_matrix(
         }
     }
 
-    // --- Impressão formatada da matriz no terminal ---
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║              MATRIZ DE CONFUSÃO (Conjunto de Teste)     ║");
-    println!("╠══════════════════════════════════════════════════════════╣");
-    println!("║  Linhas = Classe Real  |  Colunas = Classe Predita      ║");
-    println!("╚══════════════════════════════════════════════════════════╝");
-    print!("       ");
-    for j in 0..num_classes {
-        print!(" {:>5}", j); // cabeçalho das colunas (predições)
-    }
-    println!("\n       {}", "──────".repeat(num_classes));
-
-    for i in 0..num_classes {
-        print!("  {:>2}  │", i); // cabeçalho da linha (classe real)
-        for j in 0..num_classes {
-            if i == j {
-                // Diagonal principal = acertos
-                print!(" {:>5}", conf[i][j]);
-            } else {
-                // Fora da diagonal = erros
-                print!(" {:>5}", conf[i][j]);
-            }
-        }
-        // Calcula e exibe o Recall por classe (acurácia só daquele dígito)
-        let total_real: usize = conf[i].iter().sum();
-        let recall = if total_real > 0 {
-            conf[i][i] as f32 / total_real as f32 * 100.0
-        } else {
-            0.0
-        };
-        println!("  │ Acc: {:.1}%", recall);
-    }
-    println!("       {}", "──────".repeat(num_classes));
-
-    // Resumo dos principais erros (as maiores confusões fora da diagonal)
-    println!("\n── Top-5 Confusões ──────────────────────────────────────────");
-    let mut erros: Vec<(usize, usize, usize)> = vec![]; // (contagem, real, predito)
-    for i in 0..num_classes {
-        for j in 0..num_classes {
-            if i != j && conf[i][j] > 0 {
-                erros.push((conf[i][j], i, j));
-            }
-        }
-    }
-    erros.sort_by(|a, b| b.0.cmp(&a.0)); // ordena do maior erro para o menor
-    for (count, real, pred) in erros.iter().take(5) {
-        println!(
-            "  Dígito {:} confundido com {:} → {:} vezes",
-            real, pred, count
-        );
-    }
-    println!("─────────────────────────────────────────────────────────────\n");
-
     conf
 }
 
@@ -459,96 +406,6 @@ pub fn plot_confusion_matrix(conf: &[Vec<usize>], output_path: &str) {
     println!("✅ Matriz de Confusão salva em '{}'", output_path);
 }
 
-/// Visualiza os pesos da primeira camada como uma grade de imagens 28×28.
-///
-/// Cada neurônio da primeira camada tem um vetor de pesos de 784 dimensões
-/// (mesmo shape da imagem MNIST 28×28). Visualizar esses pesos revela quais
-/// padrões cada neurônio aprendeu a detectar na imagem de entrada.
-///
-/// **Colormap divergente:** azul = peso muito negativo, branco = zero, vermelho = peso positivo.
-///
-/// Disponível apenas com `--features auto-plot`.
-#[cfg(feature = "auto-plot")]
-pub fn plot_weight_grid(mlp: &MLP, output_path: &str) {
-    use plotters::prelude::*;
-
-    let n_in = mlp.dims[0].1;
-    let n_out = mlp.dims[0].0;
-
-    if n_in != 784 {
-        println!("⚠️  plot_weight_grid: esperava n_in=784, encontrou {n_in}. Pulando.");
-        return;
-    }
-
-    // Mostra até 64 neurônios em uma grade 8×8
-    let max_neurons = 64.min(n_out);
-    let grid_cols = 8usize;
-    let grid_rows = (max_neurons + grid_cols - 1) / grid_cols;
-
-    let tile = 28i32;     // cada neurônio = 28×28 px
-    let gap = 4i32;       // espaço entre tiles
-    let margin_h = 50i32; // margem horizontal
-    let title_h = 44i32;  // altura do bloco de título
-    let margin_b = 20i32;
-
-    let img_w = (margin_h + (tile + gap) * grid_cols as i32 + margin_h) as u32;
-    let img_h = (title_h + (tile + gap) * grid_rows as i32 + margin_b) as u32;
-
-    let root = BitMapBackend::new(output_path, (img_w, img_h)).into_drawing_area();
-    root.fill(&WHITE).unwrap();
-
-    root.draw_text(
-        "Pesos da Primeira Camada",
-        &TextStyle::from(("sans-serif", 19).into_font()).color(&BLACK),
-        (margin_h, 5),
-    ).unwrap();
-    root.draw_text(
-        &format!(
-            "{} de {} neurônios  ·  28×28 px por tile  ·  azul=neg  branco=0  vermelho=pos",
-            max_neurons, n_out
-        ),
-        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(100, 100, 100)),
-        (margin_h, 27),
-    ).unwrap();
-
-    let w_all = &mlp.weights[mlp.w_offsets[0]..mlp.w_offsets[1]];
-
-    for idx in 0..max_neurons {
-        let row = idx / grid_cols;
-        let col = idx % grid_cols;
-        let x0 = margin_h + col as i32 * (tile + gap);
-        let y0 = title_h + row as i32 * (tile + gap);
-
-        let w = &w_all[idx * n_in..(idx + 1) * n_in];
-
-        // Normaliza pelo valor absoluto máximo → [-1, 1]
-        let abs_max = w.iter().map(|v| v.abs()).fold(0.0f32, f32::max).max(1e-8);
-
-        for py in 0..28usize {
-            for px in 0..28usize {
-                let v = w[py * 28 + px] / abs_max; // em [-1, 1]
-                let t = (v + 1.0) * 0.5;            // em [0, 1]
-
-                // Divergente: azul → branco → vermelho
-                let (r, g, b) = if t < 0.5 {
-                    let s = 1.0 - t * 2.0;
-                    ((255.0 * (1.0 - s * 0.85)) as u8, (255.0 * (1.0 - s * 0.85)) as u8, 255u8)
-                } else {
-                    let s = (t - 0.5) * 2.0;
-                    (255u8, (255.0 * (1.0 - s * 0.85)) as u8, (255.0 * (1.0 - s * 0.85)) as u8)
-                };
-
-                root.draw(&Rectangle::new(
-                    [(x0 + px as i32, y0 + py as i32), (x0 + px as i32 + 1, y0 + py as i32 + 1)],
-                    RGBColor(r, g, b).filled(),
-                )).unwrap();
-            }
-        }
-    }
-
-    root.present().unwrap();
-    println!("✅ Grade de pesos salva em '{}'", output_path);
-}
 
 /// Gera um heatmap da ativação média de cada neurônio da última camada oculta,
 /// separado por classe de dígito (0–9).
@@ -648,12 +505,13 @@ pub fn plot_class_activations(
     }
 
     // ── Renderização ─────────────────────────────────────────────────────────
-    let cell_w = 9i32;
-    let cell_h = 32i32;
-    let margin_l = 55i32;
-    let margin_t = 58i32;
-    let margin_r = 20i32;
-    let margin_b = 30i32;
+    // Escalado para alta resolução
+    let cell_w = 20i32;
+    let cell_h = 50i32;
+    let margin_l = 80i32;
+    let margin_t = 90i32;
+    let margin_r = 30i32;
+    let margin_b = 40i32;
 
     let img_w = (margin_l + cell_w * top_k as i32 + margin_r) as u32;
     let img_h = (margin_t + cell_h * num_classes as i32 + margin_b) as u32;
@@ -663,20 +521,20 @@ pub fn plot_class_activations(
 
     root.draw_text(
         "Ativações Médias por Classe — Última Camada Oculta",
-        &TextStyle::from(("sans-serif", 17).into_font()).color(&BLACK),
-        (margin_l, 5),
+        &TextStyle::from(("sans-serif", 28).into_font()).color(&BLACK),
+        (margin_l, 10),
     ).unwrap();
     root.draw_text(
         &format!(
             "Top-{top_k} neurônios mais discriminativos  ·  linhas=dígito  ·  mais escuro=mais ativo"
         ),
-        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(100, 100, 100)),
-        (margin_l, 27),
+        &TextStyle::from(("sans-serif", 16).into_font()).color(&RGBColor(100, 100, 100)),
+        (margin_l, 45),
     ).unwrap();
     root.draw_text(
         "Neurônios →",
-        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(80, 80, 80)),
-        (margin_l, margin_t - 14),
+        &TextStyle::from(("sans-serif", 16).into_font()).color(&RGBColor(80, 80, 80)),
+        (margin_l, margin_t - 22),
     ).unwrap();
 
     for c in 0..num_classes {
@@ -685,8 +543,8 @@ pub fn plot_class_activations(
         // Label da linha
         root.draw_text(
             &format!("  {c}"),
-            &TextStyle::from(("sans-serif", 15).into_font()).color(&BLACK),
-            (2, y0 + cell_h / 2 - 9),
+            &TextStyle::from(("sans-serif", 24).into_font()).color(&BLACK),
+            (10, y0 + cell_h / 2 - 12),
         ).unwrap();
 
         for ki in 0..top_k {
@@ -715,7 +573,192 @@ pub fn plot_class_activations(
     println!("✅ Mapa de ativações por classe salvo em '{}'", output_path);
 }
 
+/// Extrai as embeddings (ativações da última camada oculta) para um subconjunto
+/// das imagens e aplica **PCA (Principal Component Analysis)** implementado do zero
+/// via iteração de potência (Power Iteration) para projetar os dados em 2D.
+///
+/// O scatter plot resultante mostra como a rede separou as classes de dígitos no espaço latente.
+///
+/// Disponível apenas com `--features auto-plot`.
+#[cfg(feature = "auto-plot")]
+pub fn plot_pca_embeddings(
+    mlp: &MLP,
+    images: &[f32],
+    labels: &[usize],
+    output_path: &str,
+) {
+    use plotters::prelude::*;
 
+    // Usa no máximo 2000 amostras para o scatter plot não ficar saturado visualmente
+    let num_samples = 2000.min(labels.len());
+    let num_layers = mlp.dims.len();
+    if num_layers < 2 {
+        println!("⚠️  plot_pca_embeddings: rede muito rasa. Pulando.");
+        return;
+    }
+    let hidden_dim = mlp.dims[num_layers - 2].0;
+
+    // 1. Extração das embeddings
+    let mut embeddings = vec![0.0f32; num_samples * hidden_dim];
+    let mut cache = BatchCache::new(&mlp.dims, num_samples);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+
+    mlp.forward_batch(&images[..num_samples * 784], &mut cache, num_samples, false, &mut rng);
+    let a_off = cache.a_offsets[num_layers - 1];
+    embeddings.copy_from_slice(&cache.activations[a_off..a_off + num_samples * hidden_dim]);
+
+    // 2. PCA do zero (Power Iteration)
+    // 2.a: Centralização (Subtrair a média de cada feature)
+    let mut means = vec![0.0f64; hidden_dim];
+    for i in 0..num_samples {
+        for j in 0..hidden_dim {
+            means[j] += embeddings[i * hidden_dim + j] as f64;
+        }
+    }
+    for j in 0..hidden_dim {
+        means[j] /= num_samples as f64;
+    }
+    for i in 0..num_samples {
+        for j in 0..hidden_dim {
+            embeddings[i * hidden_dim + j] -= means[j] as f32;
+        }
+    }
+
+    // Função auxiliar de Power Iteration para encontrar o autovetor principal
+    fn power_iteration(x: &[f32], n: usize, d: usize, iters: usize) -> Vec<f32> {
+        let mut v = vec![1.0f32 / (d as f32).sqrt(); d]; // Init uniforme
+        for _ in 0..iters {
+            // v_new = X^T * (X * v)
+            let mut xv = vec![0.0f32; n];
+            for i in 0..n {
+                let mut sum = 0.0;
+                for j in 0..d {
+                    sum += x[i * d + j] * v[j];
+                }
+                xv[i] = sum;
+            }
+            let mut v_new = vec![0.0f32; d];
+            let mut norm_sq = 0.0;
+            for j in 0..d {
+                let mut sum = 0.0;
+                for i in 0..n {
+                    sum += x[i * d + j] * xv[i];
+                }
+                v_new[j] = sum;
+                norm_sq += sum * sum;
+            }
+            // Normaliza
+            let norm = norm_sq.sqrt().max(1e-8);
+            for j in 0..d {
+                v[j] = v_new[j] / norm;
+            }
+        }
+        v
+    }
+
+    // Componente Principal 1
+    let pc1 = power_iteration(&embeddings, num_samples, hidden_dim, 20);
+
+    // Deflaçãoção de X: X' = X - (X * pc1) * pc1^T
+    let mut deflated_x = embeddings.clone();
+    for i in 0..num_samples {
+        let mut proj = 0.0;
+        for j in 0..hidden_dim {
+            proj += deflated_x[i * hidden_dim + j] * pc1[j];
+        }
+        for j in 0..hidden_dim {
+            deflated_x[i * hidden_dim + j] -= proj * pc1[j];
+        }
+    }
+
+    // Componente Principal 2
+    let pc2 = power_iteration(&deflated_x, num_samples, hidden_dim, 20);
+
+    // 3. Projeção no espaço 2D
+    let mut points_2d = Vec::with_capacity(num_samples);
+    let mut min_x = f32::MAX; let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX; let mut max_y = f32::MIN;
+
+    for i in 0..num_samples {
+        let mut x = 0.0;
+        let mut y = 0.0;
+        for j in 0..hidden_dim {
+            let val = embeddings[i * hidden_dim + j];
+            x += val * pc1[j];
+            y += val * pc2[j];
+        }
+        points_2d.push((x, y));
+        if x < min_x { min_x = x; } if x > max_x { max_x = x; }
+        if y < min_y { min_y = y; } if y > max_y { max_y = y; }
+    }
+
+    // Padding no plot
+    let pad_x = (max_x - min_x) * 0.05;
+    let pad_y = (max_y - min_y) * 0.05;
+
+    // 4. Renderização do Scatter Plot
+    let root = BitMapBackend::new(output_path, (1000, 800)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+
+    let title_style = TextStyle::from(("sans-serif", 28).into_font()).color(&BLACK);
+    root.draw_text("Embeddings PCA (Camada Oculta)", &title_style, (40, 20)).unwrap();
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin_top(70)
+        .margin_bottom(40)
+        .margin_left(60)
+        .margin_right(40)
+        .build_cartesian_2d(
+            (min_x - pad_x)..(max_x + pad_x),
+            (min_y - pad_y)..(max_y + pad_y),
+        ).unwrap();
+
+    chart.configure_mesh()
+        .disable_mesh()
+        .x_label_style(("sans-serif", 16))
+        .y_label_style(("sans-serif", 16))
+        .x_desc("Componente Principal 1")
+        .y_desc("Componente Principal 2")
+        .axis_desc_style(("sans-serif", 18))
+        .draw().unwrap();
+
+    // Paleta categórica vibrante de 10 cores
+    let palette = [
+        RGBColor(214, 39, 40),   // 0: Vermelho
+        RGBColor(31, 119, 180),  // 1: Azul
+        RGBColor(44, 160, 44),   // 2: Verde
+        RGBColor(255, 127, 14),  // 3: Laranja
+        RGBColor(148, 103, 189), // 4: Roxo
+        RGBColor(140, 86, 75),   // 5: Marrom
+        RGBColor(227, 119, 194), // 6: Rosa
+        RGBColor(127, 127, 127), // 7: Cinza
+        RGBColor(188, 189, 34),  // 8: Amarelo-esverdeado
+        RGBColor(23, 190, 207),  // 9: Ciano
+    ];
+
+    // Plota as amostras por classe para gerar a legenda corretamente
+    for digit in 0..10 {
+        let color = palette[digit];
+        chart.draw_series(
+            points_2d.iter().enumerate()
+                .filter(|(i, _)| labels[*i] == digit)
+                .map(|(_, &(x, y))| Circle::new((x, y), 3, color.filled()))
+        )
+        .unwrap()
+        .label(format!("Dígito {}", digit))
+        .legend(move |(x, y)| Circle::new((x, y), 5, color.filled()));
+    }
+
+    chart.configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .background_style(WHITE.filled())
+        .border_style(BLACK)
+        .label_font(("sans-serif", 16))
+        .draw().unwrap();
+
+    root.present().unwrap();
+    println!("✅ PCA Embeddings salvo em '{}'", output_path);
+}
 
 pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: f32) {
     let angle_rad = angle_deg.to_radians();

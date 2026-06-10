@@ -235,8 +235,8 @@ runs/
     ├── best_model.bin        ← pesos da época com melhor acurácia de teste
     ├── training_plot.png     ← gráfico acc + loss  (requer --features auto-plot)
     ├── confusion_matrix.png  ← heatmap da matriz de confusão (requer --features auto-plot)
-    ├── weights_layer0.png    ← pesos da 1ª camada como grade 28×28 (requer --features auto-plot)
-    └── class_activations.png ← ativações médias por dígito na última camada oculta (requer --features auto-plot)
+    ├── class_activations.png ← ativações médias por dígito na última camada oculta (requer --features auto-plot)
+    └── pca_embeddings.png    ← projeção PCA 2D do espaço latente da rede (requer --features auto-plot)
 ```
 
 > **`best_model.bin`** é salvo **sem nenhuma flag especial**, sempre que a acurácia de teste
@@ -281,6 +281,15 @@ cargo run --bin mlp-cpu --release --features auto-plot
 cargo run --bin mlp-gpu --release --features auto-plot
 ```
 
+**O que o `auto-plot` gera:**
+
+1. **`training_plot.png`**: Gráfico em linha mostrando a evolução da *Loss* e da *Acurácia* (treino e teste) ao longo das épocas.
+2. **`confusion_matrix.png`**: Heatmap de alta resolução da matriz de confusão sobre o conjunto de teste, evidenciando as classes que a rede mais confunde.
+3. **`class_activations.png`**: Heatmap mostrando as ativações médias da **última camada oculta**. Ele seleciona os top-N neurônios mais discriminativos (maior variância inter-classes) para visualizar como diferentes padrões ativam a rede dependendo do dígito de entrada.
+4. **`pca_embeddings.png`**: Um scatter plot 2D projetando as embeddings da última camada oculta para 2000 imagens de teste.
+   - **Detalhe de Implementação (PCA from scratch)**: Para manter a filosofia de não depender de bibliotecas matemáticas pesadas externas, o algoritmo de PCA (Principal Component Analysis) foi **implementado do zero em Rust**. O código utiliza o método de *Iteração de Potência (Power Iteration)* para extrair diretamente os 2 principais componentes principais da matriz de dados centralizada.
+   - **Interpretação**: Se o treinamento foi bem sucedido, as embeddings formarão "ilhas" (clusters) distintas de cores no espaço 2D, mostrando que a rede aprendeu a agrupar conceitualmente os dígitos antes mesmo da camada linear de classificação final.
+
 
 ---
 
@@ -295,8 +304,8 @@ cargo run --bin mlp-gpu --release --features auto-plot
 │       ├── best_model.bin       # Pesos da melhor época (sempre gerado)
 │       ├── training_plot.png    # Gráfico acc + loss  (requer auto-plot)
 │       ├── confusion_matrix.png # Heatmap              (requer auto-plot)
-│       ├── weights_layer0.png   # Grade de pesos 28×28 (requer auto-plot)
-│       └── class_activations.png# Ativações por classe (requer auto-plot)
+│       ├── class_activations.png# Ativações por classe (requer auto-plot)
+│       └── pca_embeddings.png   # Scatter plot 2D      (requer auto-plot)
 ├── src/
 │   ├── common/          # Código compartilhado (data loader, losses, augmentation)
 │   │   ├── data.rs
@@ -367,22 +376,6 @@ cargo run --bin mlp-gpu --release --features auto-plot
 
 ### Carregamento dos dados do MNIST
 
-A primeira coisa que eu precisei resolver antes de qualquer outra coisa foi carregar os dados do MNIST.
-
-| Métrica | Valor |
-|:---|:---|
-| **Acurácia Final** | **99.63%** no conjunto de teste |
-| **Tempo total** | ~19.3 minutos para 2500 épocas |
-| **Acesso** | GPU do laboratório via SSH, usando CUDA para paralelização massiva |
-
-### Comparativo de experimentos
-
-| Experimento | Hardware | Épocas | Tempo | Acurácia | Notas |
-|:---|:---|:---:|:---|:---:|:---|
-| **V1 (Ingênua)** | CPU | 25 | **23 min 13 s** | 97.09% | `Vec<Vec<T>>`, loops escalares, alocações excessivas |
-| **V2 (Otimizada)** | CPU | 25 | **8.74 s** | 97.09% | Flat memory, AVX2, Rayon, f32, cache blocking. Ganho de **157x** |
-| **V3 (SOTA)** | CPU | 300 | ~**12.25 min** | **99.60%** | Data Augmentation, Adam + OneCycleLR |
-| **V4 (GPU)** | GPU | 300 | **~84 s** | **99.63%** | CUDA + cuBLAS, gradient accumulation, mesmo augmentation da CPU |
 
 A primeira coisa que eu precisei resolver antes de qualquer outra coisa foi carregar os dados do MNIST. O formato IDX é um formato binário relativamente simples, mas tem uma estrutura específica que precisa ser respeitada rigorosamente, senão os dados saem completamente errados. O arquivo começa com um magic number de 4 bytes que identifica o tipo de dado que está sendo lido (se são imagens ou se são labels), seguido pelo número total de itens no arquivo, número de linhas por imagem e número de colunas por imagem. Todos esses valores estão armazenados em big-endian, o que significa que o byte mais significativo vem primeiro, e é preciso usar `u32::from_be_bytes` para converter corretamente.
 

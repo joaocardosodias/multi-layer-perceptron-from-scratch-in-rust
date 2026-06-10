@@ -443,14 +443,13 @@ fn main() {
             println!("✅ Gráfico salvo em '{}'", output_path);
         }
 
-        // ── Pesos da primeira camada ─────────────────────────────────────────
-        let weights_path = format!("{}/weights_layer0.png", run_dir);
-        plot_weight_grid(&mlp, &weights_path);
-
-        // ── Ativações por classe ─────────────────────────────────────────────
+        // ── Ativações por classe & Embeddings PCA ────────────────────────────
         if mlp.dims.len() >= 2 {
             let activations_path = format!("{}/class_activations.png", run_dir);
             plot_class_activations(&mlp, &test_images, num_test, &test_labels, &activations_path);
+
+            let pca_path = format!("{}/pca_embeddings.png", run_dir);
+            plot_pca_embeddings(&mlp, &test_images, &test_labels, &pca_path);
         }
 
         println!("\n📁 Todos os artefatos da run salvos em: '{}'", run_dir);
@@ -459,7 +458,7 @@ fn main() {
         println!("   ├── best_model.bin");
         println!("   ├── training_plot.png");
         println!("   ├── confusion_matrix.png");
-        println!("   ├── weights_layer0.png");
-        println!("   └── class_activations.png");
+        println!("   ├── class_activations.png");
+        println!("   └── pca_embeddings.png");
     }
 }
