@@ -6,14 +6,149 @@
 
 ## Como rodar
 
-| # | Passo |
-|---|-------|
-| 1 | Rust instalado (`cargo`) |
-| 2 | Dados do MNIST em `src/data/` |
-| 3 | Executar em modo release: |
+### 1. Instalar Rust
 
 ```bash
-cargo run --release
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Verifique a instalação:
+```bash
+rustc --version
+cargo --version
+```
+
+### 2. Instalar dependências
+
+#### CPU (Intel MKL)
+
+```bash
+# Arch Linux
+sudo pacman -S intel-oneapi-mkl
+
+# Ubuntu/Debian
+sudo apt install intel-mkl
+
+# Windows
+# Baixe o Intel oneAPI Base Toolkit em:
+# https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html
+# Durante a instalação, marque apenas a opção "Intel MKL"
+```
+
+#### GPU (NVIDIA CUDA)
+
+```bash
+# Arch Linux
+sudo pacman -S cuda cudnn
+
+# Ubuntu/Debian
+# Siga o guia oficial: https://developer.nvidia.com/cuda-downloads
+
+# Windows
+# Baixe o CUDA Toolkit em:
+# https://developer.nvidia.com/cuda-downloads
+# Selecione: Windows -> x86_64 -> sua versão do Windows -> exe (local)
+# Após instalar, adicione ao PATH:
+# C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin
+# C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\libnvvp
+```
+
+Verifique se a GPU está disponível:
+```bash
+nvidia-smi
+```
+
+### 3. Baixar dados do MNIST
+
+Baixe os 4 arquivos do MNIST:
+
+- [train-images-idx3-ubyte.gz](https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz)
+- [train-labels-idx1-ubyte.gz](https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz)
+- [t10k-images-idx3-ubyte.gz](https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz)
+- [t10k-labels-idx1-ubyte.gz](https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz)
+
+> _(Fonte alternativa: [site oficial do MNIST](http://yann.lecun.com/exdb/mnist/))_
+
+Descompacte e organize na pasta `src/data/`:
+
+**Linux/macOS:**
+```bash
+mkdir -p src/data/train-images-idx3-ubyte
+mkdir -p src/data/train-labels-idx1-ubyte
+mkdir -p src/data/t10k-images-idx3-ubyte
+mkdir -p src/data/t10k-labels-idx1-ubyte
+
+gunzip -c train-images-idx3-ubyte.gz > src/data/train-images-idx3-ubyte/train-images.idx3-ubyte
+gunzip -c train-labels-idx1-ubyte.gz > src/data/train-labels-idx1-ubyte/train-labels.idx1-ubyte
+gunzip -c t10k-images-idx3-ubyte.gz > src/data/t10k-images-idx3-ubyte/t10k-images.idx3-ubyte
+gunzip -c t10k-labels-idx1-ubyte.gz > src/data/t10k-labels-idx1-ubyte/t10k-labels.idx1-ubyte
+```
+
+**Windows (PowerShell):**
+```powershell
+# Criar pastas
+New-Item -ItemType Directory -Force -Path src\data\train-images-idx3-ubyte
+New-Item -ItemType Directory -Force -Path src\data\train-labels-idx1-ubyte
+New-Item -ItemType Directory -Force -Path src\data\t10k-images-idx3-ubyte
+New-Item -ItemType Directory -Force -Path src\data\t10k-labels-idx1-ubyte
+
+# Descompactar (requer 7-Zip ou similar)
+# Se tiver 7-Zip instalado:
+7z e train-images-idx3-ubyte.gz -osrc\data\train-images-idx3-ubyte -y
+7z e train-labels-idx1-ubyte.gz -osrc\data\train-labels-idx1-ubyte -y
+7z e t10k-images-idx3-ubyte.gz -osrc\data\t10k-images-idx3-ubyte -y
+7z e t10k-labels-idx1-ubyte.gz -osrc\data\t10k-labels-idx1-ubyte -y
+
+# Ou use o Python para descompactar:
+python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('train-images-idx3-ubyte.gz', 'rb'), open('src/data/train-images-idx3-ubyte/train-images.idx3-ubyte', 'wb'))"
+python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('train-labels-idx1-ubyte.gz', 'rb'), open('src/data/train-labels-idx1-ubyte/train-labels.idx1-ubyte', 'wb'))"
+python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('t10k-images-idx3-ubyte.gz', 'rb'), open('src/data/t10k-images-idx3-ubyte/t10k-images.idx3-ubyte', 'wb'))"
+python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('t10k-labels-idx1-ubyte.gz', 'rb'), open('src/data/t10k-labels-idx1-ubyte/t10k-labels.idx1-ubyte', 'wb'))"
+```
+
+### 4. Compilar e rodar
+
+#### Versão CPU (Intel MKL)
+
+**Linux/macOS:**
+```bash
+cargo run --bin mlp-cpu --release
+```
+
+**Windows (PowerShell):**
+```powershell
+# Configurar variáveis de ambiente do Intel MKL
+# (ajuste o caminho conforme sua instalação)
+$env:MKLROOT = "C:\Program Files (x86)\Intel\oneAPI\mkl\latest"
+$env:LIB = "$env:MKLROOT\lib\intel64;$env:LIB"
+$env:INCLUDE = "$env:MKLROOT\include;$env:INCLUDE"
+
+# Compilar e rodar
+cargo run --bin mlp-cpu --release
+```
+
+#### Versão GPU (NVIDIA CUDA)
+
+**Linux:**
+```bash
+cargo run --bin mlp-gpu --release
+```
+
+**Windows (PowerShell):**
+```powershell
+# Configurar variáveis de ambiente do CUDA
+# (ajuste o caminho conforme sua instalação)
+$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x"
+$env:PATH = "$env:CUDA_PATH\bin;$env:PATH"
+$env:LIB = "$env:CUDA_PATH\lib\x64;$env:LIB"
+$env:INCLUDE = "$env:CUDA_PATH\include;$env:INCLUDE"
+
+# Verificar se a GPU está disponível
+nvidia-smi
+
+# Compilar e rodar
+cargo run --bin mlp-gpu --release
 ```
 
 > _(Hardware: Dell Latitude, Arch Linux, Intel Core i5-1345u, 16GB RAM, sem GPU)_
