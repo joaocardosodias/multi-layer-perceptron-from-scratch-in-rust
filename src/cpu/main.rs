@@ -10,6 +10,8 @@ use network::{BatchCache, Gradients, MLP};
 use optimizers::AdamState;
 use rand::Rng;
 use rayon::prelude::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use utils::*;
 
@@ -41,6 +43,21 @@ struct Cli {
     arch: Option<String>,
 }
 
+/// Gera um ID curto e único para a run baseado em timestamp + hiperparâmetros.
+fn make_run_id(epochs: usize, batch_size: usize, lr: f32, arch: &str) -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut h = DefaultHasher::new();
+    ts.hash(&mut h);
+    epochs.hash(&mut h);
+    batch_size.hash(&mut h);
+    arch.hash(&mut h);
+    (lr.to_bits()).hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -57,18 +74,47 @@ fn main() {
     let test_labels = load_labels("src/data/t10k-labels-idx1-ubyte/t10k-labels.idx1-ubyte");
 
     let num_threads = rayon::current_num_threads();
-    println!(
-        "Treino: {} | Teste: {} | Threads: {}",
-        num_train, num_test, num_threads
-    );
 
     let arch_str = args.arch.clone().unwrap_or("784,2048,1024,10".to_string());
     let architecture: Vec<usize> = arch_str
         .split(',')
         .map(|s| s.parse().expect("Arquitetura inválida"))
         .collect();
+
+    // ── Cria a pasta da run ──────────────────────────────────────────────────
+    let run_id = make_run_id(args.epochs, args.batch_size, args.learning_rate, &arch_str);
+    let run_dir = format!("runs/{}", run_id);
+    std::fs::create_dir_all(&run_dir).expect("Não foi possível criar a pasta da run");
+
+    println!("╔══════════════════════════════════════════════════════════╗");
+    println!("║  Run ID : {}  ║", run_id);
+    println!("║  Pasta  : {:50}║", run_dir);
+    println!("╚══════════════════════════════════════════════════════════╝");
+    println!("Treino: {} | Teste: {} | Threads: {}", num_train, num_test, num_threads);
     println!("Arquitetura: {:?}", architecture);
     println!("Épocas: {} | Batch: {} | LR: {:.1e}", args.epochs, args.batch_size, args.learning_rate);
+
+    // Salva a configuração da run em JSON simples
+    {
+        use std::io::Write;
+        let cfg_path = format!("{}/run_config.json", run_dir);
+        if let Ok(mut f) = std::fs::File::create(&cfg_path) {
+            let _ = writeln!(f, "{{");
+            let _ = writeln!(f, "  \"run_id\": \"{}\",", run_id);
+            let _ = writeln!(f, "  \"arch\": \"{}\",", arch_str);
+            let _ = writeln!(f, "  \"epochs\": {},", args.epochs);
+            let _ = writeln!(f, "  \"batch_size\": {},", args.batch_size);
+            let _ = writeln!(f, "  \"learning_rate\": {},", args.learning_rate);
+            let _ = writeln!(f, "  \"weight_decay\": {},", args.weight_decay);
+            let _ = writeln!(f, "  \"dropout_keep\": {},", args.dropout_keep);
+            let _ = writeln!(f, "  \"augment_p_keep\": {},", args.augment_p_keep);
+            let _ = writeln!(f, "  \"label_smoothing\": {}", args.label_smoothing);
+            let _ = writeln!(f, "}}");
+        }
+        println!("📄 Configuração salva em '{}'", cfg_path);
+    }
+
+    let log_path = format!("{}/training_log.csv", run_dir);
 
     let mut mlp = MLP::new(&architecture);
 
@@ -220,12 +266,12 @@ fn main() {
         use std::io::Write;
         
         if epoch == 0 {
-            if let Ok(mut file) = File::create("training_log.csv") {
+            if let Ok(mut file) = File::create(&log_path) {
                 let _ = writeln!(file, "epoch,train_loss,train_acc,test_acc,test_loss");
             }
         }
         
-        if let Ok(mut file) = File::options().append(true).open("training_log.csv") {
+        if let Ok(mut file) = File::options().append(true).open(&log_path) {
             let _ = writeln!(
                 file, 
                 "{},{:.6},{:.2},{:.2},{:.6}", 
@@ -253,19 +299,27 @@ fn main() {
         best_epoch
     );
 
+    // Gera a Matriz de Confusão sobre o conjunto de teste completo ao final do treino.
+    // Útil para identificar quais dígitos a rede mais confunde entre si.
+    // Retorna a matriz raw para uso no gráfico PNG (quando --features auto-plot está ativo).
+    let conf = confusion_matrix(&mlp, &test_images, num_test, &test_labels);
+
     #[cfg(feature = "auto-plot")]
     {
+        let cm_path = format!("{}/confusion_matrix.png", run_dir);
+        plot_confusion_matrix(&conf, &cm_path);
+
         use plotters::prelude::*;
         use std::fs::File;
         use std::io::BufReader;
 
-        let mut epochs = vec![];
+        let mut plot_epochs = vec![];
         let mut train_losses = vec![];
         let mut train_accs = vec![];
         let mut test_accs = vec![];
         let mut test_losses = vec![];
 
-        if let Ok(file) = File::open("training_log.csv") {
+        if let Ok(file) = File::open(&log_path) {
             let mut reader = csv::Reader::from_reader(BufReader::new(file));
             for result in reader.records() {
                 if let Ok(record) = result {
@@ -276,7 +330,7 @@ fn main() {
                         record[3].parse::<f32>(),
                         record[4].parse::<f32>(),
                     ) {
-                        epochs.push(e);
+                        plot_epochs.push(e);
                         train_losses.push(tl);
                         train_accs.push(ta);
                         test_accs.push(te);
@@ -286,15 +340,15 @@ fn main() {
             }
         }
 
-        if !epochs.is_empty() {
-            let output_path = "training_plot.png";
-            let root = BitMapBackend::new(output_path, (1200, 500)).into_drawing_area();
+        if !plot_epochs.is_empty() {
+            let output_path = format!("{}/training_plot.png", run_dir);
+            let root = BitMapBackend::new(&output_path, (1200, 500)).into_drawing_area();
             let white = WHITE;
             root.fill(&white).unwrap();
 
             let (left, right) = root.split_horizontally(600);
 
-            let max_epoch = *epochs.iter().max().unwrap_or(&300) + 10;
+            let max_epoch = *plot_epochs.iter().max().unwrap_or(&300) + 10;
             let mut acc_chart = ChartBuilder::on(&left)
                 .caption("Acurácia ao longo do Treinamento", ("sans-serif", 30))
                 .margin(10)
@@ -312,7 +366,7 @@ fn main() {
 
             acc_chart
                 .draw_series(LineSeries::new(
-                    epochs.iter().zip(train_accs.iter()).map(|(&x, &y)| (x, y)),
+                    plot_epochs.iter().zip(train_accs.iter()).map(|(&x, &y)| (x, y)),
                     BLUE,
                 ))
                 .unwrap()
@@ -321,7 +375,7 @@ fn main() {
 
             acc_chart
                 .draw_series(LineSeries::new(
-                    epochs.iter().zip(test_accs.iter()).map(|(&x, &y)| (x, y)),
+                    plot_epochs.iter().zip(test_accs.iter()).map(|(&x, &y)| (x, y)),
                     RED,
                 ))
                 .unwrap()
@@ -353,7 +407,7 @@ fn main() {
 
             loss_chart
                 .draw_series(LineSeries::new(
-                    epochs.iter().zip(train_losses.iter()).map(|(&x, &y)| (x, y)),
+                    plot_epochs.iter().zip(train_losses.iter()).map(|(&x, &y)| (x, y)),
                     BLUE,
                 ))
                 .unwrap()
@@ -362,7 +416,7 @@ fn main() {
 
             loss_chart
                 .draw_series(LineSeries::new(
-                    epochs.iter().zip(test_losses.iter()).map(|(&x, &y)| (x, y)),
+                    plot_epochs.iter().zip(test_losses.iter()).map(|(&x, &y)| (x, y)),
                     RED,
                 ))
                 .unwrap()
@@ -379,5 +433,11 @@ fn main() {
             root.present().unwrap();
             println!("✅ Gráfico salvo em '{}'", output_path);
         }
+
+        println!("\n📁 Todos os artefatos da run salvos em: '{}'", run_dir);
+        println!("   ├── run_config.json");
+        println!("   ├── training_log.csv");
+        println!("   ├── training_plot.png");
+        println!("   └── confusion_matrix.png");
     }
 }

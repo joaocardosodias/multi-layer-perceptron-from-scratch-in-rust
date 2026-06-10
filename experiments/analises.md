@@ -18,7 +18,7 @@
 | **Parâmetros** | ~118 mil |
 | **Capacidade** | Baixa |
 
-> Ambas usaram: batch=256, LR=3e-3, dropout=0.9, weight_decay=1e-4, 300 épocas
+> Ambas usaram: batch=256, LR=3e-3, dropout=0.9, weight_decay=1e-4, 50 épocas
 
 ---
 
@@ -53,16 +53,16 @@
 
 ### 3. Gap Treino-Teste
 
-**Observado:** A rede grande apresenta um gap maior entre acurácia de treino e teste (~0.5-1%), enquanto a rede pequena tem um gap menor (~0.1-0.3%).
+**Observado:** Em ambas as redes, a acurácia de teste é MAIOR que a acurácia de treino. A rede grande apresenta um gap menor (~2.1% de diferença), enquanto a rede pequena tem um gap maior (~6.4%).
 
-**Explicação:** Redes maiores têm mais tendência a overfitting (decorar o treino em vez de generalizar). No entanto, com o data augmentation pesado (rotação, translação, distorção elástica), o gap é controlado. A rede pequena sofre de underfitting — ela não consegue nem aprender o treino direito, então o gap é artificialmente pequeno.
+**Explicação:** Como há uso de data augmentation pesado no treino (rotação, translação, distorção), as imagens de treino ficam muito mais difíceis de classificar do que as imagens limpas do conjunto de teste. A rede pequena tem menos capacidade e sofre muito mais com as distorções, apresentando uma acurácia de treino bem mais baixa (underfitting no treino distorcido), o que eleva o gap. A rede grande consegue se adaptar melhor às distorções, mantendo a acurácia de treino mais próxima da de teste.
 
 ### 4. Velocidade de Convergência
 
 | Configuração | Épocas para 90% | Tempo por época |
 |:---|:---:|:---:|
-| Rede Grande | ~5-10 épocas | ~7.6s |
-| Rede Pequena | ~15-25 épocas | ~3s |
+| Rede Grande | 2 épocas | ~7.6s |
+| Rede Pequena | 6 épocas | ~3s |
 
 **Explicação:** Redes maiores convergem em menos épocas porque cada época proporciona mais atualizações informativas. No entanto, cada época demora mais devido ao maior número de operações matriciais. O trade-off é: *mais tempo por época, mas menos épocas necessárias*.
 
@@ -72,16 +72,14 @@
 
 **Explicação:** Isso ocorre porque o data augmentation deforma as imagens de treino (rotação, translação, distorção elástica), tornando o treino mais difícil que o teste. O modelo se esforça mais para aprender com imagens deformadas e, na hora do teste (imagens limpas), ele generaliza melhor. Esse comportamento é exatamente o esperado e desejado — é a prova de que o augmentation está funcionando.
 
-> 📖 *Analogia: Um aluno que estuda com exercícios difíceis vai errar mais durante o estudo, mas acertará mais na prova (que é mais fácil).*
 
 ---
 
 ## Conclusões
 
-1. **Rede Grande (3,6M parâmetros):** Recomendada para máxima acurácia. Atinge ~99.6% com 300 épocas.
-2. **Rede Pequena (118K parâmetros):** Adequada para prototipagem rápida ou hardware limitado. Atinge ~97-98%.
+1. **Rede Grande (3,6M parâmetros):** Recomendada para máxima acurácia. Atinge ~99.4% com 50 épocas.
+2. **Rede Pequena (118K parâmetros):** Adequada para prototipagem rápida ou hardware limitado. Atinge ~98.4% com 50 épocas.
 3. **Data Augmentation é crucial:** Sem ele, ambas as redes overfittariam severamente.
 4. **Trade-off fundamental:** Capacidade vs. Velocidade vs. Generalização.
 
 ---
-*Experimentos gerados automaticamente pelo script `experiments/run_comparison.sh`*

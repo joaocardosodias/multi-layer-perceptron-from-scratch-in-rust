@@ -223,9 +223,13 @@ Os testes incluem:
 - **Cross-entropy**: loss e backward
 - **Gradient check**: verificação numérica dos gradientes analíticos
 
-### 6. Gerar gráfico automaticamente
+### 6. Logs em CSV e Gráficos Automáticos
 
-Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
+#### Logs de Treinamento (CSV)
+Durante qualquer treinamento (CPU ou GPU), o modelo **sempre** gera e atualiza um arquivo chamado `training_log.csv` na raiz do projeto. Esse arquivo contém os dados de *loss* e acurácia (*train* e *test*) para cada época. Não é necessária nenhuma flag especial para gerar este CSV, ele é o comportamento padrão.
+
+#### Gerar gráfico automaticamente (Plot)
+Para gerar também um gráfico em imagem com as curvas de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
 
 ```bash
 # CPU
@@ -235,7 +239,7 @@ cargo run --bin mlp-cpu --release --features auto-plot
 cargo run --bin mlp-gpu --release --features auto-plot
 ```
 
-Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
+Isso fará com que o código leia o `training_log.csv` recém-criado e salve um arquivo `training_plot.png` com os gráficos visuais.
 
 ### 7. Experimentos e Comparação
 

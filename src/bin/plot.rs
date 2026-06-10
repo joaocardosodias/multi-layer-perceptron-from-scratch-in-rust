@@ -55,12 +55,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (left_area, right_area) = root_area.split_horizontally(600);
     
     let max_epoch = datasets.iter().flat_map(|d| d.epoch.iter()).max().copied().unwrap_or(300) + 10;
+    let min_acc = datasets.iter()
+        .flat_map(|d| d.test_acc.iter())
+        .copied()
+        .fold(f32::INFINITY, f32::min)
+        .max(0.0);
+    
     let mut acc_chart = ChartBuilder::on(&left_area)
         .caption("Acurácia ao longo do Treinamento", ("sans-serif", 20))
         .margin(10)
         .x_label_area_size(40)
         .y_label_area_size(50)
-        .build_cartesian_2d(0u32..max_epoch, 90.0f32..100.0f32)?;
+        .build_cartesian_2d(0u32..max_epoch, min_acc..100.0f32)?;
         
     acc_chart.configure_mesh().draw()?;
     
@@ -73,14 +79,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         ))?.label(&ds.label)
           .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
     }
-    acc_chart.configure_series_labels().position(SeriesLabelPosition::UpperLeft).draw()?;
+    acc_chart.configure_series_labels().position(SeriesLabelPosition::LowerRight).draw()?;
     
+    let max_loss = datasets.iter()
+        .flat_map(|d| d.test_loss.iter())
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max)
+        .min(5.0);
+
     let mut loss_chart = ChartBuilder::on(&right_area)
         .caption("Loss ao longo do Treinamento", ("sans-serif", 20))
         .margin(10)
         .x_label_area_size(40)
         .y_label_area_size(50)
-        .build_cartesian_2d(0u32..max_epoch, 0.0f32..2.0f32)?;
+        .build_cartesian_2d(0u32..max_epoch, 0.0f32..max_loss)?;
         
     loss_chart.configure_mesh().draw()?;
     
@@ -97,5 +109,39 @@ fn main() -> Result<(), Box<dyn Error>> {
     root_area.present()?;
     println!("✅ Gráfico salvo em '{}/comparison_plot.png'", output_dir);
     
+    // Create individual plots
+    for (idx, ds) in datasets.iter().enumerate() {
+        let out_name = if idx == 0 { "run1_plot.png" } else { "run2_plot.png" };
+        let out_path = format!("{}/{}", output_dir, out_name);
+        let area = BitMapBackend::new(&out_path, (800, 500)).into_drawing_area();
+        area.fill(&WHITE)?;
+        
+        let mut chart = ChartBuilder::on(&area)
+            .caption(format!("{} - Acurácia e Loss", ds.label), ("sans-serif", 20))
+            .margin(10)
+            .x_label_area_size(40)
+            .y_label_area_size(50)
+            .right_y_label_area_size(50)
+            .build_cartesian_2d(0u32..max_epoch, min_acc..100.0f32)?
+            .set_secondary_coord(0u32..max_epoch, 0.0f32..max_loss);
+            
+        chart.configure_mesh().draw()?;
+        
+        chart.draw_series(LineSeries::new(
+            ds.epoch.iter().zip(ds.test_acc.iter()).map(|(&x, &y)| (x, y)),
+            BLUE,
+        ))?.label("Acurácia").legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+        
+        chart.draw_secondary_series(LineSeries::new(
+            ds.epoch.iter().zip(ds.test_loss.iter()).map(|(&x, &y)| (x, y)),
+            RED,
+        ))?;
+        // workaround to add secondary series to legend
+        chart.draw_series(LineSeries::new(vec![], RED))?.label("Loss").legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        
+        chart.configure_series_labels().position(SeriesLabelPosition::UpperRight).draw()?;
+        area.present()?;
+    }
+
     Ok(())
 }
