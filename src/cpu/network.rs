@@ -482,7 +482,6 @@ impl MLP {
                 }
             }
 
-            // Apply dropout mask to delta_curr_ptr
             #[cfg(target_arch = "x86_64")]
             unsafe {
                 use std::arch::x86_64::*;

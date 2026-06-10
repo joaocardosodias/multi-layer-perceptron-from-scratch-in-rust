@@ -570,7 +570,6 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     int img_idx = __ldg(&indices[sample]);
     float orig = __ldg(&all_images[img_idx * 784 + pixel]);
 
-    // RNG para decidir se aplica augmentation
     unsigned int s1 = seed ^ (sample * 2654435761u);
     s1 ^= s1 << 13; s1 ^= s1 >> 17; s1 ^= s1 << 5;
     float r_keep = (s1 & 0x7FFFFFFFu) * (1.0f / 2147483647.0f);
@@ -580,7 +579,6 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
         return;
     }
 
-    // ==== AFFINE (igual a CPU) ====
     unsigned int s2 = s1 ^ 0x9e3779b9u;
     s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
     float angle_deg = (s2 & 0x7FFFFFFFu) * (30.0f / 2147483647.0f) - 15.0f;
@@ -603,9 +601,6 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
     float src_x = dx * cos_a + dy * sin_a - tx + cx;
     float src_y = -dx * sin_a + dy * cos_a - ty + cy;
 
-    // ==== ELASTIC DISTORTION (aproximado com box blur 3x3 no hash) ====
-    // Em vez de hash puro por pixel (sigma=0, destrutivo), 
-    // calculamos a média de uma vizinhança 3x3 para suavizar (aproxima sigma=5)
     float sum_x = 0.0f, sum_y = 0.0f;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
@@ -619,11 +614,8 @@ extern "C" __global__ void gather_and_augment(const float* all_images, const int
             sum_y += (hs2 & 0x7FFFFFFFu) * (2.0f / 2147483647.0f) - 1.0f;
         }
     }
-    // Box blur 3x3 = 9 amostras, alpha=36 (4x o anterior que era 1.8)
     src_x += (sum_x / 9.0f) * 3.6f;
     src_y += (sum_y / 9.0f) * 3.6f;
-    // Nota: 3.6 = 36/10, pois o box blur 3x3 é mais suave que o gaussian blur 5x3 da CPU
-    // Se precisar de mais força, aumentar para 5.4 ou 7.2
 
     if (src_x >= 0.0f && src_x < 27.0f && src_y >= 0.0f && src_y < 27.0f) {
         int x0 = (int)floorf(src_x);
@@ -764,7 +756,6 @@ extern "C" __global__ void apply_elastic_distortion(const float* all_images, con
     int img_idx = __ldg(&indices[sample]);
     float orig = __ldg(&all_images[img_idx * 784 + pixel]);
 
-    // RNG para decidir se aplica augmentation
     unsigned int s1 = seed ^ (sample * 2654435761u);
     s1 ^= s1 << 13; s1 ^= s1 >> 17; s1 ^= s1 << 5;
     float r_keep = (s1 & 0x7FFFFFFFu) * (1.0f / 2147483647.0f);
@@ -774,7 +765,6 @@ extern "C" __global__ void apply_elastic_distortion(const float* all_images, con
         return;
     }
 
-    // ==== AFFINE (gerado por amostra, como CPU) ====
     unsigned int s2 = s1 ^ 0x9e3779b9u;
     s2 ^= s2 << 13; s2 ^= s2 >> 17; s2 ^= s2 << 5;
     float angle_deg = (s2 & 0x7FFFFFFFu) * (40.0f / 2147483647.0f) - 20.0f;
@@ -797,7 +787,6 @@ extern "C" __global__ void apply_elastic_distortion(const float* all_images, con
     float src_x = dx_val * cos_a + dy_val * sin_a - tx + cx;
     float src_y = -dx_val * sin_a + dy_val * cos_a - ty + cy;
 
-    // ==== ELASTIC DISTORTION (exato como CPU) ====
     src_x += alpha * dx[sample * 784 + pixel];
     src_y += alpha * dy[sample * 784 + pixel];
 

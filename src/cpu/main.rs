@@ -62,7 +62,6 @@ fn main() {
         num_train, num_test, num_threads
     );
 
-    // Ler arquitetura do argumento ou usar padrão
     let arch_str = args.arch.clone().unwrap_or("784,2048,1024,10".to_string());
     let architecture: Vec<usize> = arch_str
         .split(',')
@@ -214,14 +213,12 @@ fn main() {
             eval_time.as_secs_f64()
         );
 
-        // Salvar no CSV para experimentos
         let train_loss = epoch_loss / total as f32;
         let train_acc = 100.0 * correct as f32 / total as f32;
         
         use std::fs::File;
         use std::io::Write;
         
-        // Cria ou sobrescreve o arquivo no início do treino
         if epoch == 0 {
             if let Ok(mut file) = File::create("training_log.csv") {
                 let _ = writeln!(file, "epoch,train_loss,train_acc,test_acc,test_loss");
@@ -262,9 +259,6 @@ fn main() {
         use std::fs::File;
         use std::io::BufReader;
 
-        println!("\n📊 Gerando gráfico de treinamento...");
-
-        // Ler dados do CSV
         let mut epochs = vec![];
         let mut train_losses = vec![];
         let mut train_accs = vec![];
@@ -300,7 +294,6 @@ fn main() {
 
             let (left, right) = root.split_horizontally(600);
 
-            // Gráfico de Acurácia
             let max_epoch = *epochs.iter().max().unwrap_or(&300) + 10;
             let mut acc_chart = ChartBuilder::on(&left)
                 .caption("Acurácia ao longo do Treinamento", ("sans-serif", 30))
@@ -342,7 +335,6 @@ fn main() {
                 .draw()
                 .unwrap();
 
-            // Gráfico de Loss
             let max_loss = train_losses.iter().chain(test_losses.iter()).cloned().fold(0.0f32, f32::max) * 1.2;
             let mut loss_chart = ChartBuilder::on(&right)
                 .caption("Loss ao longo do Treinamento", ("sans-serif", 30))

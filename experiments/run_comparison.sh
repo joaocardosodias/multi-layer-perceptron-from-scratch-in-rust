@@ -17,14 +17,14 @@ echo "=== Iniciando Experimentos ==="
 # --- Configuração 1: Rede Grande (Baseline) ---
 echo ">> Rodando Configuração 1: Rede Grande [784, 2048, 1024, 10]"
 rm -f $LOG_FILE
-cargo run --bin mlp-cpu --release -- --arch "784,2048,1024,10"
+cargo run --bin mlp-gpu --release -- --arch "784,2048,1024,10"
 mv $LOG_FILE "$OUTPUT_DIR/run1.csv"
 echo ">> Configuração 1 finalizada."
 
 # --- Configuração 2: Rede Pequena ---
 echo ">> Rodando Configuração 2: Rede Pequena [784, 128, 64, 10]"
 rm -f $LOG_FILE
-cargo run --bin mlp-cpu --release -- --arch "784,128,64,10"
+cargo run --bin mlp-gpu --release -- --arch "784,128,64,10"
 mv $LOG_FILE "$OUTPUT_DIR/run2.csv"
 echo ">> Configuração 2 finalizada."
 

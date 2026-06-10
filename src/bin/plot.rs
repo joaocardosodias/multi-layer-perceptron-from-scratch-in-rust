@@ -21,7 +21,6 @@ impl TrainingData {
         for result in reader.records() {
             let record = result?;
             data.epoch.push(record[0].parse()?);
-            // Formato do CSV: epoch, train_loss, train_acc, test_acc, test_loss
             data.test_acc.push(record[3].parse()?);
             data.test_loss.push(record[4].parse()?);
         }
@@ -45,7 +44,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         i += 2;
     }
     
-    // Criar pasta experiments/output se não existir
     let output_dir = "experiments/output";
     std::fs::create_dir_all(output_dir)?;
     
@@ -56,7 +54,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     let (left_area, right_area) = root_area.split_horizontally(600);
     
-    // Gráfico de Acurácia
     let max_epoch = datasets.iter().flat_map(|d| d.epoch.iter()).max().copied().unwrap_or(300) + 10;
     let mut acc_chart = ChartBuilder::on(&left_area)
         .caption("Acurácia ao longo do Treinamento", ("sans-serif", 20))
@@ -78,7 +75,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     acc_chart.configure_series_labels().position(SeriesLabelPosition::UpperLeft).draw()?;
     
-    // Gráfico de Loss
     let mut loss_chart = ChartBuilder::on(&right_area)
         .caption("Loss ao longo do Treinamento", ("sans-serif", 20))
         .margin(10)

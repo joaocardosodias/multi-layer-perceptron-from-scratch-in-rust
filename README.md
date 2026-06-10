@@ -79,6 +79,21 @@ Verifique se a GPU está disponível:
 nvidia-smi
 ```
 
+#### Para gerar gráficos (auto-plot)
+
+O `plotters` precisa da biblioteca `fontconfig` para renderizar texto:
+
+```bash
+# Ubuntu/Debian
+sudo apt install libfontconfig1-dev pkg-config
+
+# Arch Linux
+sudo pacman -S fontconfig pkgconf
+
+# macOS (já vem instalado)
+# Windows (já incluso no pacote plotters)
+```
+
 ### 3. Baixar dados do MNIST
 
 Baixe os 4 arquivos do MNIST:
@@ -187,7 +202,28 @@ cargo run --bin mlp-gpu --release -- \
 | `--weight-decay` | `0.0001` | Penalidade L2 (weight decay) |
 | `--arch` | `"784,2048,1024,10"` | Arquitetura da rede (separado por vírgulas) |
 
-### 5. Gerar gráfico automaticamente
+### 5. Rodar testes unitários
+
+O projeto inclui testes unitários para as funções de ativação (ReLU, Softmax) e seus gradientes:
+
+```bash
+# Rodar todos os testes
+cargo test
+
+# Rodar apenas testes de ativações
+cargo test activations
+
+# Rodar com output detalhado
+cargo test activations -- --nocapture
+```
+
+Os testes incluem:
+- **ReLU**: forward, backward, gradient check numérico
+- **Softmax**: forward (estabilidade numérica, valores grandes/negativos)
+- **Cross-entropy**: loss e backward
+- **Gradient check**: verificação numérica dos gradientes analíticos
+
+### 6. Gerar gráfico automaticamente
 
 Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
 
@@ -201,7 +237,7 @@ cargo run --bin mlp-gpu --release --features auto-plot
 
 Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
 
-### 6. Experimentos e Comparação
+### 7. Experimentos e Comparação
 
 Para comparar diferentes configurações (arquiteturas, learning rates, etc):
 
