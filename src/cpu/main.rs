@@ -1,3 +1,4 @@
+mod gradient_check;
 mod linalg;
 mod network;
 mod optimizers;
@@ -115,6 +116,7 @@ fn main() {
     }
 
     let log_path = format!("{}/training_log.csv", run_dir);
+    let best_model_path = format!("{}/best_model.bin", run_dir);
 
     let mut mlp = MLP::new(&architecture);
 
@@ -286,6 +288,7 @@ fn main() {
         if test_acc > best_test_acc {
             best_test_acc = test_acc;
             best_epoch = epoch + 1;
+            save_weights(&mlp, &best_model_path);
         }
     }
 
@@ -294,10 +297,16 @@ fn main() {
         total_start.elapsed().as_secs_f64()
     );
     println!(
-        "Melhor acuracia de teste: {:.2}% na Epoca {}",
+        "Melhor acuracia de teste: {:.2}% na Epoca {} → '{}'",
         best_test_acc * 100.0,
-        best_epoch
+        best_epoch,
+        best_model_path
     );
+
+    // Recarrega os pesos da melhor época antes de gerar todos os artefatos.
+    // Garante que a matriz de confusão, os gráficos de pesos e o mapa de ativações
+    // reflitam o modelo de melhor acurácia, não necessariamente o último.
+    load_weights(&mut mlp, &best_model_path);
 
     // Gera a Matriz de Confusão sobre o conjunto de teste completo ao final do treino.
     // Útil para identificar quais dígitos a rede mais confunde entre si.
@@ -434,10 +443,23 @@ fn main() {
             println!("✅ Gráfico salvo em '{}'", output_path);
         }
 
+        // ── Pesos da primeira camada ─────────────────────────────────────────
+        let weights_path = format!("{}/weights_layer0.png", run_dir);
+        plot_weight_grid(&mlp, &weights_path);
+
+        // ── Ativações por classe ─────────────────────────────────────────────
+        if mlp.dims.len() >= 2 {
+            let activations_path = format!("{}/class_activations.png", run_dir);
+            plot_class_activations(&mlp, &test_images, num_test, &test_labels, &activations_path);
+        }
+
         println!("\n📁 Todos os artefatos da run salvos em: '{}'", run_dir);
         println!("   ├── run_config.json");
         println!("   ├── training_log.csv");
+        println!("   ├── best_model.bin");
         println!("   ├── training_plot.png");
-        println!("   └── confusion_matrix.png");
+        println!("   ├── confusion_matrix.png");
+        println!("   ├── weights_layer0.png");
+        println!("   └── class_activations.png");
     }
 }

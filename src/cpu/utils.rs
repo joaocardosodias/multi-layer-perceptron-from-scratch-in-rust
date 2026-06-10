@@ -188,6 +188,137 @@ pub fn confusion_matrix(
     conf
 }
 
+// ─── Serialização dos pesos ───────────────────────────────────────────────────
+
+/// Salva os pesos e biases da rede em um arquivo binário compacto.
+///
+/// ## Formato do arquivo (`best_model.bin`)
+///
+/// ```text
+/// [magic : u32  = 0x4D4C5000]   "MLP\0" — identifica o tipo do arquivo
+/// [nlayers: u32]                 número de camadas
+/// [dims   : (u32, u32) × nlayers]  (n_out, n_in) de cada camada
+/// [weights: f32 × total_weights] pesos em ordem flat (mesmo layout do treino)
+/// [biases : f32 × total_biases]  biases em ordem flat
+/// ```
+///
+/// Usa `std::io::Write` diretamente em bytes para evitar dependências externas.
+pub fn save_weights(mlp: &MLP, path: &str) {
+    use std::fs::File;
+    use std::io::{BufWriter, Write};
+
+    let file = match File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("⚠️  Não foi possível criar '{}': {}", path, e);
+            return;
+        }
+    };
+    let mut w = BufWriter::new(file);
+
+    // Magic number
+    let _ = w.write_all(&0x4D4C5000u32.to_le_bytes());
+
+    // Número de camadas
+    let nlayers = mlp.dims.len() as u32;
+    let _ = w.write_all(&nlayers.to_le_bytes());
+
+    // Dimensões de cada camada
+    for &(r, c) in &mlp.dims {
+        let _ = w.write_all(&(r as u32).to_le_bytes());
+        let _ = w.write_all(&(c as u32).to_le_bytes());
+    }
+
+    // Pesos (flat)
+    for &wv in &mlp.weights {
+        let _ = w.write_all(&wv.to_le_bytes());
+    }
+
+    // Biases (flat)
+    for &bv in &mlp.biases {
+        let _ = w.write_all(&bv.to_le_bytes());
+    }
+
+    let _ = w.flush();
+    println!("💾 Pesos salvos em '{}'", path);
+}
+
+/// Carrega os pesos e biases de um arquivo gerado por [`save_weights`] para um `MLP` existente.
+///
+/// Verifica o magic number e a compatibilidade das dimensões antes de sobrescrever qualquer dado.
+/// Se o arquivo não existir ou estiver incompatível, nada é alterado e um aviso é impresso.
+pub fn load_weights(mlp: &mut MLP, path: &str) {
+    use std::fs;
+    use std::io::{Cursor, Read};
+
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("⚠️  Não foi possível ler '{}': {}", path, e);
+            return;
+        }
+    };
+
+    let mut cur = Cursor::new(&bytes);
+    let mut buf4 = [0u8; 4];
+
+    macro_rules! read_u32 {
+        () => {{
+            if cur.read_exact(&mut buf4).is_err() { return; }
+            u32::from_le_bytes(buf4)
+        }};
+    }
+    macro_rules! read_f32 {
+        () => {{
+            if cur.read_exact(&mut buf4).is_err() { return; }
+            f32::from_le_bytes(buf4)
+        }};
+    }
+
+    // Verifica magic
+    let magic = read_u32!();
+    if magic != 0x4D4C5000 {
+        eprintln!("⚠️  '{}' não é um arquivo de pesos válido (magic incorreto).", path);
+        return;
+    }
+
+    // Verifica número de camadas
+    let nlayers = read_u32!() as usize;
+    if nlayers != mlp.dims.len() {
+        eprintln!(
+            "⚠️  Incompatibilidade de arquitetura: arquivo tem {} camadas, rede tem {}.",
+            nlayers,
+            mlp.dims.len()
+        );
+        return;
+    }
+
+    // Verifica dimensões
+    for (i, &(r, c)) in mlp.dims.iter().enumerate() {
+        let fr = read_u32!() as usize;
+        let fc = read_u32!() as usize;
+        if fr != r || fc != c {
+            eprintln!(
+                "⚠️  Dimensão incompatível na camada {}: arquivo=({},{}) rede=({},{}).",
+                i, fr, fc, r, c
+            );
+            return;
+        }
+    }
+
+    // Carrega pesos
+    for wv in &mut mlp.weights {
+        *wv = read_f32!();
+    }
+
+    // Carrega biases
+    for bv in &mut mlp.biases {
+        *bv = read_f32!();
+    }
+
+    println!("✅ Melhor modelo carregado de '{}'", path);
+}
+
 /// Gera um heatmap PNG da Matriz de Confusão usando `plotters`.
 ///
 /// Cada célula é colorida por intensidade:
@@ -327,6 +458,264 @@ pub fn plot_confusion_matrix(conf: &[Vec<usize>], output_path: &str) {
     root.present().unwrap();
     println!("✅ Matriz de Confusão salva em '{}'", output_path);
 }
+
+/// Visualiza os pesos da primeira camada como uma grade de imagens 28×28.
+///
+/// Cada neurônio da primeira camada tem um vetor de pesos de 784 dimensões
+/// (mesmo shape da imagem MNIST 28×28). Visualizar esses pesos revela quais
+/// padrões cada neurônio aprendeu a detectar na imagem de entrada.
+///
+/// **Colormap divergente:** azul = peso muito negativo, branco = zero, vermelho = peso positivo.
+///
+/// Disponível apenas com `--features auto-plot`.
+#[cfg(feature = "auto-plot")]
+pub fn plot_weight_grid(mlp: &MLP, output_path: &str) {
+    use plotters::prelude::*;
+
+    let n_in = mlp.dims[0].1;
+    let n_out = mlp.dims[0].0;
+
+    if n_in != 784 {
+        println!("⚠️  plot_weight_grid: esperava n_in=784, encontrou {n_in}. Pulando.");
+        return;
+    }
+
+    // Mostra até 64 neurônios em uma grade 8×8
+    let max_neurons = 64.min(n_out);
+    let grid_cols = 8usize;
+    let grid_rows = (max_neurons + grid_cols - 1) / grid_cols;
+
+    let tile = 28i32;     // cada neurônio = 28×28 px
+    let gap = 4i32;       // espaço entre tiles
+    let margin_h = 50i32; // margem horizontal
+    let title_h = 44i32;  // altura do bloco de título
+    let margin_b = 20i32;
+
+    let img_w = (margin_h + (tile + gap) * grid_cols as i32 + margin_h) as u32;
+    let img_h = (title_h + (tile + gap) * grid_rows as i32 + margin_b) as u32;
+
+    let root = BitMapBackend::new(output_path, (img_w, img_h)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+
+    root.draw_text(
+        "Pesos da Primeira Camada",
+        &TextStyle::from(("sans-serif", 19).into_font()).color(&BLACK),
+        (margin_h, 5),
+    ).unwrap();
+    root.draw_text(
+        &format!(
+            "{} de {} neurônios  ·  28×28 px por tile  ·  azul=neg  branco=0  vermelho=pos",
+            max_neurons, n_out
+        ),
+        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(100, 100, 100)),
+        (margin_h, 27),
+    ).unwrap();
+
+    let w_all = &mlp.weights[mlp.w_offsets[0]..mlp.w_offsets[1]];
+
+    for idx in 0..max_neurons {
+        let row = idx / grid_cols;
+        let col = idx % grid_cols;
+        let x0 = margin_h + col as i32 * (tile + gap);
+        let y0 = title_h + row as i32 * (tile + gap);
+
+        let w = &w_all[idx * n_in..(idx + 1) * n_in];
+
+        // Normaliza pelo valor absoluto máximo → [-1, 1]
+        let abs_max = w.iter().map(|v| v.abs()).fold(0.0f32, f32::max).max(1e-8);
+
+        for py in 0..28usize {
+            for px in 0..28usize {
+                let v = w[py * 28 + px] / abs_max; // em [-1, 1]
+                let t = (v + 1.0) * 0.5;            // em [0, 1]
+
+                // Divergente: azul → branco → vermelho
+                let (r, g, b) = if t < 0.5 {
+                    let s = 1.0 - t * 2.0;
+                    ((255.0 * (1.0 - s * 0.85)) as u8, (255.0 * (1.0 - s * 0.85)) as u8, 255u8)
+                } else {
+                    let s = (t - 0.5) * 2.0;
+                    (255u8, (255.0 * (1.0 - s * 0.85)) as u8, (255.0 * (1.0 - s * 0.85)) as u8)
+                };
+
+                root.draw(&Rectangle::new(
+                    [(x0 + px as i32, y0 + py as i32), (x0 + px as i32 + 1, y0 + py as i32 + 1)],
+                    RGBColor(r, g, b).filled(),
+                )).unwrap();
+            }
+        }
+    }
+
+    root.present().unwrap();
+    println!("✅ Grade de pesos salva em '{}'", output_path);
+}
+
+/// Gera um heatmap da ativação média de cada neurônio da última camada oculta,
+/// separado por classe de dígito (0–9).
+///
+/// Para cada classe, percorre todas as imagens de teste daquela classe e calcula
+/// a ativação média do último bloco ReLU (camada antes do softmax).
+/// Em seguida, seleciona os **top-K neurônios com maior variância entre classes**
+/// — esses são os mais discriminativos — e os exibe como heatmap.
+///
+/// **Leitura do heatmap:**
+/// - Linhas = dígito real (0 a 9)
+/// - Colunas = neurônio selecionado (ordenado por variância decrescente)
+/// - Cor mais escura (roxo/azul) = neurônio mais ativo para aquela classe
+/// - Uma coluna com padrão claro/escuro forte = neurônio que distingue classes
+///
+/// Disponível apenas com `--features auto-plot`.
+#[cfg(feature = "auto-plot")]
+pub fn plot_class_activations(
+    mlp: &MLP,
+    images: &[f32],
+    num_images: usize,
+    labels: &[usize],
+    output_path: &str,
+) {
+    use plotters::prelude::*;
+
+    let num_classes = 10;
+    let num_layers = mlp.dims.len();
+
+    // Última camada oculta = penúltima entrada do cache (antes do softmax)
+    let hidden_dim = mlp.dims[num_layers - 2].0;
+
+    // Acumuladores: soma das ativações e contagem por classe
+    let mut acc = vec![vec![0.0f64; hidden_dim]; num_classes];
+    let mut count = vec![0usize; num_classes];
+
+    let eval_bs = 256;
+    let mut cache = BatchCache::new(&mlp.dims, eval_bs);
+    let mut batch_input = vec![0.0f32; eval_bs * 784];
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+
+    for chunk_start in (0..num_images).step_by(eval_bs) {
+        let chunk_end = (chunk_start + eval_bs).min(num_images);
+        let bs = chunk_end - chunk_start;
+
+        for k in 0..bs {
+            let i = chunk_start + k;
+            batch_input[k * 784..(k + 1) * 784]
+                .copy_from_slice(&images[i * 784..(i + 1) * 784]);
+        }
+
+        mlp.forward_batch(&batch_input, &mut cache, bs, false, &mut rng);
+
+        // cache.a_offsets[num_layers - 1] = início das ativações da última camada oculta
+        let a_off = cache.a_offsets[num_layers - 1];
+
+        for k in 0..bs {
+            let label = labels[chunk_start + k];
+            let off = k * hidden_dim;
+            for j in 0..hidden_dim {
+                acc[label][j] += cache.activations[a_off + off + j] as f64;
+            }
+            count[label] += 1;
+        }
+    }
+
+    // Média por classe
+    let means: Vec<Vec<f32>> = (0..num_classes)
+        .map(|c| {
+            let n = count[c].max(1) as f64;
+            acc[c].iter().map(|&s| (s / n) as f32).collect()
+        })
+        .collect();
+
+    // Seleciona top-K neurônios por variância entre classes (os mais discriminativos)
+    let top_k = 80.min(hidden_dim);
+    let mut neuron_vars: Vec<(f32, usize)> = (0..hidden_dim)
+        .map(|j| {
+            let mu = means.iter().map(|m| m[j]).sum::<f32>() / num_classes as f32;
+            let var = means.iter().map(|m| (m[j] - mu).powi(2)).sum::<f32>() / num_classes as f32;
+            (var, j)
+        })
+        .collect();
+    neuron_vars.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let top_neurons: Vec<usize> = neuron_vars.iter().take(top_k).map(|&(_, j)| j).collect();
+
+    // Monta a matriz de exibição e normaliza cada coluna para [0, 1]
+    let mut mat: Vec<Vec<f32>> = (0..num_classes)
+        .map(|c| top_neurons.iter().map(|&j| means[c][j]).collect())
+        .collect();
+
+    for ki in 0..top_k {
+        let col_max = mat.iter().map(|r| r[ki]).fold(0.0f32, f32::max).max(1e-8);
+        for c in 0..num_classes {
+            mat[c][ki] /= col_max;
+        }
+    }
+
+    // ── Renderização ─────────────────────────────────────────────────────────
+    let cell_w = 9i32;
+    let cell_h = 32i32;
+    let margin_l = 55i32;
+    let margin_t = 58i32;
+    let margin_r = 20i32;
+    let margin_b = 30i32;
+
+    let img_w = (margin_l + cell_w * top_k as i32 + margin_r) as u32;
+    let img_h = (margin_t + cell_h * num_classes as i32 + margin_b) as u32;
+
+    let root = BitMapBackend::new(output_path, (img_w, img_h)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+
+    root.draw_text(
+        "Ativações Médias por Classe — Última Camada Oculta",
+        &TextStyle::from(("sans-serif", 17).into_font()).color(&BLACK),
+        (margin_l, 5),
+    ).unwrap();
+    root.draw_text(
+        &format!(
+            "Top-{top_k} neurônios mais discriminativos  ·  linhas=dígito  ·  mais escuro=mais ativo"
+        ),
+        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(100, 100, 100)),
+        (margin_l, 27),
+    ).unwrap();
+    root.draw_text(
+        "Neurônios →",
+        &TextStyle::from(("sans-serif", 11).into_font()).color(&RGBColor(80, 80, 80)),
+        (margin_l, margin_t - 14),
+    ).unwrap();
+
+    for c in 0..num_classes {
+        let y0 = margin_t + c as i32 * cell_h;
+
+        // Label da linha
+        root.draw_text(
+            &format!("  {c}"),
+            &TextStyle::from(("sans-serif", 15).into_font()).color(&BLACK),
+            (2, y0 + cell_h / 2 - 9),
+        ).unwrap();
+
+        for ki in 0..top_k {
+            let x0 = margin_l + ki as i32 * cell_w;
+            let v = mat[c][ki]; // [0, 1]
+
+            // Colormap: branco → roxo escuro (inspirado em "plasma")
+            let r = (255.0 * (1.0 - v * 0.72)) as u8;
+            let g = (255.0 * (1.0 - v * 0.82)) as u8;
+            let b = (255.0 * (1.0 - v * 0.30)) as u8;
+
+            root.draw(&Rectangle::new(
+                [(x0, y0), (x0 + cell_w, y0 + cell_h)],
+                RGBColor(r, g, b).filled(),
+            )).unwrap();
+
+            // Borda sutil entre células
+            root.draw(&Rectangle::new(
+                [(x0, y0), (x0 + cell_w, y0 + cell_h)],
+                RGBColor(220, 220, 220).stroke_width(1),
+            )).unwrap();
+        }
+    }
+
+    root.present().unwrap();
+    println!("✅ Mapa de ativações por classe salvo em '{}'", output_path);
+}
+
+
 
 pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: f32) {
     let angle_rad = angle_deg.to_radians();

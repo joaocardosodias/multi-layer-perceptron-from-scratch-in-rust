@@ -223,13 +223,55 @@ Os testes incluem:
 - **Cross-entropy**: loss e backward
 - **Gradient check**: verificação numérica dos gradientes analíticos
 
-### 6. Logs em CSV e Gráficos Automáticos
+### 6. Organização automática das runs
+
+Cada execução de treinamento cria automaticamente uma pasta única em `runs/`, identificada por um **hash de 16 caracteres** gerado a partir do timestamp e dos hiperparâmetros daquela run. Todos os artefatos ficam organizados dentro dessa pasta.
+
+```
+runs/
+└── a3f7c2d1e4b09812/        ← hash único da run
+    ├── run_config.json       ← hiperparâmetros usados (arch, epochs, lr, ...)
+    ├── training_log.csv      ← métricas por época (loss e acurácia)
+    ├── best_model.bin        ← pesos da época com melhor acurácia de teste
+    ├── training_plot.png     ← gráfico acc + loss  (requer --features auto-plot)
+    ├── confusion_matrix.png  ← heatmap da matriz de confusão (requer --features auto-plot)
+    ├── weights_layer0.png    ← pesos da 1ª camada como grade 28×28 (requer --features auto-plot)
+    └── class_activations.png ← ativações médias por dígito na última camada oculta (requer --features auto-plot)
+```
+
+> **`best_model.bin`** é salvo **sem nenhuma flag especial**, sempre que a acurácia de teste
+> supera o melhor valor visto até aquele momento. Antes de gerar os gráficos e a matriz de
+> confusão, o programa recarrega automaticamente esse arquivo — garantindo que todos os
+> artefatos visuais reflitam o **modelo de pico**, não o da última época.
+
+No início de cada execução, o terminal imprime o ID e o caminho da run:
+
+```
+╔══════════════════════════════════════════════════════════╗
+║  Run ID : a3f7c2d1e4b09812                               ║
+║  Pasta  : runs/a3f7c2d1e4b09812                          ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+Ao final (com `--features auto-plot`), um sumário lista todos os arquivos salvos:
+
+```
+📁 Todos os artefatos da run salvos em: 'runs/a3f7c2d1e4b09812'
+   ├── run_config.json
+   ├── training_log.csv
+   ├── training_plot.png
+   └── confusion_matrix.png
+```
+
+> **Nenhum arquivo é salvo solto na raiz do projeto.** Cada run é completamente isolada na sua própria pasta, facilitando comparar experimentos e não perder resultados anteriores.
 
 #### Logs de Treinamento (CSV)
-Durante qualquer treinamento (CPU ou GPU), o modelo **sempre** gera e atualiza um arquivo chamado `training_log.csv` na raiz do projeto. Esse arquivo contém os dados de *loss* e acurácia (*train* e *test*) para cada época. Não é necessária nenhuma flag especial para gerar este CSV, ele é o comportamento padrão.
 
-#### Gerar gráfico automaticamente (Plot)
-Para gerar também um gráfico em imagem com as curvas de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
+O arquivo `training_log.csv` é gerado **sempre**, sem nenhuma flag especial. Ele contém as métricas de *loss* e acurácia (*train* e *test*) para cada época.
+
+#### Gráficos automáticos (auto-plot)
+
+Adicione `--features auto-plot` para gerar os gráficos e a matriz de confusão ao final do treino:
 
 ```bash
 # CPU
@@ -239,62 +281,46 @@ cargo run --bin mlp-cpu --release --features auto-plot
 cargo run --bin mlp-gpu --release --features auto-plot
 ```
 
-Isso fará com que o código leia o `training_log.csv` recém-criado e salve um arquivo `training_plot.png` com os gráficos visuais.
-
-### 7. Experimentos e Comparação
-
-Para comparar diferentes configurações (arquiteturas, learning rates, etc):
-
-```bash
-# Rodar script de comparação automática
-chmod +x experiments/run_comparison.sh
-./experiments/run_comparison.sh
-
-# Ou manualmente (com gráfico automático):
-cargo run --bin mlp-cpu --release --features auto-plot -- \
-    --arch "784,2048,1024,10"
-mv training_log.csv experiments/output/run1.csv
-mv training_plot.png experiments/output/run1_plot.png
-
-cargo run --bin mlp-cpu --release --features auto-plot -- \
-    --arch "784,128,64,10"
-mv training_log.csv experiments/output/run2.csv
-mv training_plot.png experiments/output/run2_plot.png
-
-# Gerar gráfico de comparação entre runs
-cargo run --bin plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
-```
-O gráfico será salvo em `experiments/output/comparison_plot.png`.
 
 ---
 
 ## Organização do repositório
 
 ```
-src/
-├── common/          # Código compartilhado (data loader, losses, augmentation)
-│   ├── data.rs
-│   ├── losses.rs
-│   ├── augment.rs
-│   └── mod.rs
-├── cpu/             # Versão CPU (MKL / OpenBLAS / Accelerate)
-│   ├── main.rs      # Entry point CPU
-│   ├── network.rs   # MLP com BLAS
-│   ├── optimizers.rs
-│   └── utils.rs
-├── gpu/             # Versão GPU (NVIDIA CUDA)
-│   ├── main.rs      # Entry point GPU
-│   ├── network.rs   # MLP com cuBLAS
-│   ├── kernels.rs   # Kernels CUDA customizados
-│   ├── optimizers.rs
-│   ├── linalg.rs
-│   └── utils.rs
-├── bin/
-│   └── plot.rs      # Gerador de gráficos de comparação (100% Rust)
-├── experiments/
-│   ├── run_comparison.sh  # Script para rodar experimentos comparativos
-│   └── output/            # Resultados dos experimentos (CSVs e gráficos)
-└── lib.rs           # Biblioteca compartilhada
+.
+├── runs/                        # Artefatos organizados por run (gerado automaticamente)
+│   └── <hash-da-run>/
+│       ├── run_config.json      # Hiperparâmetros da run
+│       ├── training_log.csv     # Métricas por época
+│       ├── best_model.bin       # Pesos da melhor época (sempre gerado)
+│       ├── training_plot.png    # Gráfico acc + loss  (requer auto-plot)
+│       ├── confusion_matrix.png # Heatmap              (requer auto-plot)
+│       ├── weights_layer0.png   # Grade de pesos 28×28 (requer auto-plot)
+│       └── class_activations.png# Ativações por classe (requer auto-plot)
+├── src/
+│   ├── common/          # Código compartilhado (data loader, losses, augmentation)
+│   │   ├── data.rs
+│   │   ├── losses.rs
+│   │   ├── augment.rs
+│   │   └── mod.rs
+│   ├── cpu/             # Versão CPU (MKL / OpenBLAS / Accelerate)
+│   │   ├── main.rs      # Entry point CPU
+│   │   ├── network.rs   # MLP com BLAS
+│   │   ├── optimizers.rs
+│   │   └── utils.rs
+│   ├── gpu/             # Versão GPU (NVIDIA CUDA)
+│   │   ├── main.rs      # Entry point GPU
+│   │   ├── network.rs   # MLP com cuBLAS
+│   │   ├── kernels.rs   # Kernels CUDA customizados
+│   │   ├── optimizers.rs
+│   │   ├── linalg.rs
+│   │   └── utils.rs
+│   ├── bin/
+│   │   └── plot.rs      # Gerador de gráficos de comparação (100% Rust)
+│   └── lib.rs           # Biblioteca compartilhada
+└── experiments/
+    ├── run_comparison.sh  # Script para rodar experimentos comparativos
+    └── output/            # Resultados de comparações entre runs
 ```
 
 ---
@@ -333,7 +359,7 @@ src/
 | **V1 (Ingênua)** | CPU | 25 | **23 min 13 s** | 97.09% | `Vec<Vec<T>>`, loops escalares, alocações excessivas |
 | **V2 (Otimizada)** | CPU | 25 | **8.74 s** | 97.09% | Flat memory, AVX2, Rayon, f32, cache blocking. Ganho de **157x** |
 | **V3 (SOTA)** | CPU | 300 | ~**12.25 min** | **99.60%** | Data Augmentation, Adam + OneCycleLR |
-| **V4 (GPU)** | GPU | 300 | **~84 s** | **99.63%** | CUDA + cuBLAS, gradient accumulation, mesmo augmentation da CPU |
+| **V4 (GPU)** | GPU | 2500 | **~1160 s** | **99.63%** | CUDA + cuBLAS, gradient accumulation, mesmo augmentation da CPU |
 
 ---
 
