@@ -52,6 +52,18 @@ struct Cli {
 /// Configura o dispositivo CUDA, pre-aloca toda a memória necessária na VRAM,
 /// carrega os dados do MNIST, executa o loop de treinamento iterando sobre os batches
 /// e chama as funções otimizadas (cuBLAS e Kernels customizados) para treinar a rede.
+///
+/// # Arquitetura Padrão e Escolhas de Design
+/// - **Entrada:** 784 neurônios (achatamento das imagens 28x28 do MNIST).
+/// - **Camadas Ocultas:** Padrão de `2048` e `1024` neurônios. O alto número de parâmetros
+///   é treinado de forma muito eficiente pelo paralelismo massivo da GPU, extraindo abstrações
+///   complexas das imagens.
+/// - **Ativação Oculta:** `ReLU` (Rectified Linear Unit). Essencial para redes profundas pois 
+///   não satura o gradiente para valores positivos e seu cálculo em CUDA (kernel `relu`) é 
+///   virtualmente instântaneo, livre de exponenciações matemáticas custosas.
+/// - **Saída:** 10 neurônios (para as 10 possíveis classes de dígitos do MNIST).
+/// - **Ativação de Saída:** `Softmax`. Executada via um kernel CUDA customizado altamente 
+///   paralelizado por blocos, transformando a saída final na predição de classe mais provável.
 fn main() {
     let args = Cli::parse();
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");

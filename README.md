@@ -374,6 +374,16 @@ cargo run --bin mlp-gpu --release --features auto-plot
 
 ## Decisões e dificuldades
 
+### Arquitetura da Rede e Ativações
+
+Ao definir o tamanho e formato da nossa MLP, as escolhas foram feitas pensando em maximizar a capacidade de representação e a velocidade de convergência:
+
+- **Entrada (784 neurônios):** Determinada diretamente pelo *dataset* MNIST (28x28 pixels = 784).
+- **Camadas Ocultas (2048 e 1024 neurônios):** Essa é uma rede consideravelmente larga para a simplicidade do MNIST. O alto número de parâmetros confere à rede uma enorme capacidade de mapear *features* intrincadas e aprender sobre as severas deformações injetadas pelo nosso *Data Augmentation*. A grande vantagem aqui é que, graças à nossa implementação altamente paralela e vetorizada (AVX2/SIMD na CPU e cuBLAS na GPU), o cálculo de grandes matrizes permanece incrivelmente veloz.
+- **Ativação Oculta (ReLU):** Usamos a *Rectified Linear Unit* (`max(0, x)`). O primeiro motivo é sua velocidade brutal: calcular max(0, x) é quase instantâneo se comparado a ativações baseadas em exponenciais matemáticas (como Sigmoid/Tanh). Além disso, ela é excelente para combater o problema do desaparecimento de gradiente (*vanishing gradient*) para valores positivos, o que permitiu o treinamento acelerado.
+- **Saída (10 neurônios):** Um neurônio reservado para a probabilidade de cada classe de dígito (0 a 9).
+- **Ativação de Saída (Softmax):** Utilizada no final da rede para converter os valores brutos da predição (logits) em uma distribuição de probabilidade bem comportada. Essa ativação funciona de maneira idílica em conjunto com a função de custo *Cross-Entropy Loss*, sendo a base matemática clássica que garante penalizações eficientes aos erros de classificação multiclasse durante o *backward pass*.
+
 ### Carregamento dos dados do MNIST
 
 

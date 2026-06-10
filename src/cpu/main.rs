@@ -68,6 +68,18 @@ fn make_run_id(epochs: usize, batch_size: usize, lr: f32, arch: &str) -> String 
 /// Ponto de entrada principal para a versão CPU.
 /// Configura o ambiente, carrega os dados MNIST, divide o processamento do treinamento
 /// em threads (Rayon) processando minibatches concorrentemente, e gera métricas e gráficos.
+///
+/// # Arquitetura Padrão e Escolhas de Design
+/// - **Entrada:** 784 neurônios (achatamento das imagens 28x28 do MNIST).
+/// - **Camadas Ocultas:** Padrão de `2048` e `1024` neurônios. Essa alta dimensionalidade permite 
+///   que a rede extraia características complexas dos dígitos com grande capacidade de representação.
+/// - **Ativação Oculta:** `ReLU` (Rectified Linear Unit). Escolhida pois é extremamente rápida 
+///   para computar na CPU (apenas `max(0, x)`), mitiga o problema de desaparecimento de gradiente 
+///   (*vanishing gradient*) e acelera a convergência em redes profundas.
+/// - **Saída:** 10 neurônios (representando as 10 classes de dígitos de 0 a 9).
+/// - **Ativação de Saída:** `Softmax`. Converte as saídas (logits) em uma distribuição de 
+///   probabilidades, essencial para classificação multiclasse e para o uso da função de 
+///   custo `Cross-Entropy`.
 fn main() {
     let args = Cli::parse();
 
