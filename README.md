@@ -551,10 +551,18 @@ E com mais épocas sendo viáveis graças à velocidade, consegui alcançar **99
 
 Isso mostra o poder de ter acesso a hardware melhor: com a GPU, pude rodar muito mais épocas em muito menos tempo, e a acurácia subiu naturalmente. O código GPU mantém a mesma arquitetura `[784, 2048, 1024, 10]`, os mesmos hiperparâmetros (`LR=3e-3`, `dropout=0.9`, `weight_decay=1e-4`) e o mesmo data augmentation da CPU. A única diferença é o hardware e a paralelização via CUDA.
 
-### Limitações
+### Limitações e Aprendizados
 
-> Otimizações extremas focadas em arquitetura **x86_64 Intel**, usando intrinsics AVX2 (`_mm256_*`) que são específicos desses processadores. Se você tentar rodar em AMD ou Mac (Apple Silicon, arquitetura ARM), provavelmente o desempenho vai ser bem pior, ou talvez nem rode. rsrs
->
-> A versão GPU requer uma GPU NVIDIA com suporte a CUDA e a crate `cudarc` compilada.
+Além do foco extremo de otimização em hardware **x86_64 Intel** (usando *intrinsics* AVX2 na versão CPU que sacrificam a portabilidade fluida para chips ARM/Apple Silicon), a construção completa do zero evidenciou outras barreiras práticas significativas:
 
-No futuro, se eu fosse refazer, equilibraria melhor a balança entre otimização bruta e portabilidade cruzada de hardware. Mas pro aprendizado? **Descer até o nível de registrador e entender como a CPU e a GPU realmente funcionam foi a melhor decisão que eu tomei nesse projeto.**
+1. **Falta de Ferramental (Observabilidade):** Ao fugir do Python e PyTorch, perdemos o acesso a ferramentas valiosas "de graça", como *TensorBoard*, *Weights & Biases* ou perfis de GPU abstraídos. Todas as visualizações, como a elaborada matriz de confusão e os gráficos iterativos de *loss*, tiveram que ser construídas "na unha" usando logs explícitos em `.csv` e a biblioteca secundária gráfica `plotters` do Rust.
+2. **Velocidade de Experimentação (Tempo de Desenvolvedor):** Apesar de o tempo de **execução da máquina** ter ficado incrivelmente baixo (treinar a rede massiva em apenas segundos), o tempo para **desenvolver novas lógicas** escala vertiginosamente. Experimentar uma função de ativação diferente ou testar um novo otimizador exige lidar com as regras rígidas do *Borrow Checker* do Rust, reescrever *Kernels* em baixo nível com CUDA C e fazer todo o raciocínio vetorial matemático explicitamente no código.
+
+### O que eu faria de diferente num projeto futuro?
+
+Se eu fosse redesenhar a engine base deste projeto, eu priorizaria:
+
+1. **Treinamento em Precisão Mista (*Mixed Precision / f16*):** Toda a atual arquitetura flui cálculos matemáticos engessada no tipo numérico `f32`. Para extrair 100% da performance bruta das *Tensor Cores* embutidas nas GPUs NVIDIA modernas, seria ideal integrar uso de meia-precisão (`f16` ou `bfloat16`). Num próximo desafio, tentaria orquestrar a matemática de *Mixed Precision* nativa e uso de dimensionamento dinâmico de gradientes (*Gradient Scaling*) para possivelmente dobrar o *throughput* na GPU sem ceder à perda de acurácia.
+2. **Modularização via *Traits* do Rust:** O código atual acoplou grande parte do controle de tensores e matrizes numa *Struct* principal e monolítica da nossa `MLP`. Explorar a fundo a robustez arquitetônica do sistema de `Traits` do Rust — padronizando algo como `trait Layer { fn forward(), fn backward() }` — permitiria que as camadas passassem a se comportar agnosticamente como "blocos de montar". Inserir arquiteturas de aprendizado moderno, como *BatchNormalization* ou convoluções, passaria a ser simples, isolado e plugável no código-base geral.
+
+Mesmo pontuando essas limitações e evoluções, abrir mão de ferramentas polidas para descer até as entranhas do ciclo de relógio do registrador para entender e ver em tempo real como a CPU/GPU calculam os pesos da rede foi, com absoluta certeza, **a decisão técnica de aprendizado mais rica que eu tomei em todo o projeto.**
