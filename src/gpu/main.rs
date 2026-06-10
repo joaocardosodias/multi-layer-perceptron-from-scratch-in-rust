@@ -19,6 +19,7 @@ use mlp::common::data::{load_images, load_labels};
 use network::{BatchCache, Gradients, MLP};
 use optimizers::{AdamState, OneCycleLR, adam_update};
 
+/// Argumentos de linha de comando para o treinamento acelerado por GPU (CUDA).
 #[derive(Parser)]
 #[command(name = "mlp-gpu", about = "MLP Trainer using NVIDIA GPU with CUDA")]
 struct Cli {
@@ -47,6 +48,10 @@ struct Cli {
     arch: Option<String>,
 }
 
+/// Ponto de entrada principal para a versão GPU.
+/// Configura o dispositivo CUDA, pre-aloca toda a memória necessária na VRAM,
+/// carrega os dados do MNIST, executa o loop de treinamento iterando sobre os batches
+/// e chama as funções otimizadas (cuBLAS e Kernels customizados) para treinar a rede.
 fn main() {
     let args = Cli::parse();
     let dev = CudaDevice::new(0).expect("Falha ao inicializar CUDA");
@@ -344,6 +349,7 @@ fn main() {
     );
 }
 
+/// Embaralha o vetor de índices in-place usando o algoritmo Fisher-Yates clássico.
 fn shuffle_indices(indices: &mut [usize]) {
     use rand::Rng;
     let mut rng = rand::thread_rng();

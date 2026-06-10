@@ -3,6 +3,8 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rayon::prelude::*;
 
+/// Aplica transformações afins (rotação e translação) a uma imagem 2D.
+/// `angle_deg` é o ângulo de rotação em graus. `tx` e `ty` são as translações em pixels nos eixos X e Y.
 pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: f32) {
     let angle_rad = angle_deg.to_radians();
     let cos_a = angle_rad.cos();
@@ -45,6 +47,8 @@ pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: 
     }
 }
 
+/// Aplica um desfoque Gaussiano 2D a um campo de valores (usado na distorção elástica).
+/// `sigma` controla a intensidade/abrangência do desfoque.
 fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     let radius = (3.0 * sigma).ceil() as usize;
     let k_size = 2 * radius + 1;
@@ -84,6 +88,8 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     }
 }
 
+/// Aplica distorção elástica a uma imagem 2D, uma técnica comum de Data Augmentation para imagens.
+/// `alpha` controla a intensidade da distorção e `sigma` a suavidade dos deslocamentos gerados.
 pub fn elastic_distort(src: &[f32], dst: &mut [f32], alpha: f32, sigma: f32, rng: &mut StdRng) {
     let mut dx: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
     let mut dy: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
@@ -113,6 +119,8 @@ pub fn elastic_distort(src: &[f32], dst: &mut [f32], alpha: f32, sigma: f32, rng
     }
 }
 
+/// Gera um dataset de treinamento aumentado a partir de imagens originais utilizando processamento paralelo.
+/// Uma certa proporção das imagens (`p_keep`) sofrerá augmentations combinadas (transformações afins + distorção elástica).
 pub fn generate_augmented_dataset(
     train_images: &[f32],
     num_train: usize,

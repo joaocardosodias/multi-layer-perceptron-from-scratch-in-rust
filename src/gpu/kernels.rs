@@ -13,6 +13,8 @@ macro_rules! compile_kernel {
     }};
 }
 
+/// Estrutura que mantém as referências para todas as funções (kernels) CUDA compiladas
+/// e carregadas no dispositivo para execução.
 pub struct Kernels {
     pub bias_add: CudaFunction,
     pub relu: CudaFunction,
@@ -35,6 +37,8 @@ pub struct Kernels {
 }
 
 impl Kernels {
+    /// Compila dinamicamente (JIT - Just-In-Time via NVRTC) todo o código C/CUDA em PTX
+    /// e vincula as funções na GPU, retornando a estrutura preenchida.
     pub fn new(dev: &Arc<CudaDevice>) -> Result<Self, GpuError> {
         let bias_add = compile_kernel!(dev, "bias_add", BIAS_ADD);
         let relu = compile_kernel!(dev, "relu", RELU);

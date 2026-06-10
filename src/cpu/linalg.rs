@@ -2,6 +2,9 @@ use cblas_sys::{CBLAS_LAYOUT, CBLAS_TRANSPOSE};
 use std::os::raw::c_int;
 
 #[inline]
+/// Realiza a multiplicação de matrizes de forma eficiente (GEMM - General Matrix Multiply) usando CBLAS (OpenBLAS/Accelerate).
+/// Computa: `C = alpha * A * B + beta * C`.
+/// `rsa/csa` (row/column strides) definem se a matriz deve ser considerada transposta ou não na memória.
 pub unsafe fn gemm(
     m: usize,
     k: usize,

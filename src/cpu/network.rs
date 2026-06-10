@@ -3,6 +3,9 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand_distr::{Distribution, Normal};
 
+/// Estrutura principal da rede neural Multi-Layer Perceptron (CPU).
+/// Armazena pesos e vieses de forma linearizada (1D) para otimização de cache local (cache-friendly),
+/// usando vetores de 'offsets' para acessar rapidamente os dados de cada camada.
 pub struct MLP {
     pub weights: Vec<f32>,
     pub w_offsets: Vec<usize>,
@@ -11,6 +14,8 @@ pub struct MLP {
     pub dims: Vec<(usize, usize)>,
 }
 
+/// Armazena os dados intermediários gerados durante o processamento de um batch.
+/// Reutilizar essa estrutura evita alocações dinâmicas a cada iteração, maximizando a performance.
 pub struct BatchCache {
     pub pre_activations: Vec<f32>,
     pub p_offsets: Vec<usize>,
@@ -23,6 +28,7 @@ pub struct BatchCache {
 }
 
 impl BatchCache {
+    /// Instancia o cache alocando o espaço exato necessário para a arquitetura da rede e o tamanho do batch.
     pub fn new(dims: &[(usize, usize)], batch_size: usize) -> Self {
         let mut pre_activations = Vec::new();
         let mut p_offsets = Vec::new();
@@ -67,6 +73,7 @@ impl BatchCache {
     }
 }
 
+/// Estrutura para armazenar os gradientes calculados (derivadas parciais) em relação aos pesos (`dw`) e vieses (`db`).
 pub struct Gradients {
     pub dw: Vec<f32>,
     pub w_offsets: Vec<usize>,
@@ -75,6 +82,7 @@ pub struct Gradients {
 }
 
 impl Gradients {
+    /// Cria tensores de gradientes do mesmo formato que os pesos/vieses da MLP, inicializados com zeros.
     pub fn new(mlp: &MLP) -> Self {
         Gradients {
             dw: vec![0.0; mlp.weights.len()],
@@ -84,11 +92,14 @@ impl Gradients {
         }
     }
 
+    /// Zera todos os valores dos gradientes (chamado no início de cada batch/iteração).
     pub fn zero(&mut self) {
         self.dw.fill(0.0);
         self.db.fill(0.0);
     }
 
+    /// Acumula gradientes de outra fonte somando aos atuais.
+    /// Fortemente otimizado para arquiteturas x86_64 usando instruções vetoriais AVX (SIMD).
     pub fn accumulate(&mut self, src: &Gradients) {
         #[cfg(target_arch = "x86_64")]
         unsafe {
@@ -127,6 +138,8 @@ impl Gradients {
 }
 
 impl MLP {
+    /// Constrói a MLP com base no array de arquitetura passado (ex: `[784, 128, 10]`).
+    /// Utiliza a inicialização de pesos Normal padronizada (baseada em He initialization).
     pub fn new(architecture: &[usize]) -> Self {
         let mut weights = Vec::new();
         let mut w_offsets = Vec::new();
@@ -166,6 +179,9 @@ impl MLP {
         }
     }
 
+    /// Realiza o cálculo Forward para um batch inteiro (várias amostras processadas simultaneamente).
+    /// As ativações (ReLU para camadas ocultas e Softmax para saída) e Dropout são fundidas no mesmo loop para eficiência,
+    /// explorando bibliotecas BLAS (`gemm`) para o processamento denso pesado.
     pub fn forward_batch(
         &self,
         input_batch: &[f32],
@@ -333,6 +349,9 @@ impl MLP {
         }
     }
 
+    /// Realiza a Backpropagation para um batch.
+    /// Começa pelo erro final (usando a derivada da Softmax com entropia cruzada),
+    /// e depois propaga de volta (`gemm` transposto) multiplicando pelas derivadas locais das ativações (ReLU/Dropout).
     pub fn backward_batch(
         &self,
         cache: &mut BatchCache,

@@ -6,10 +6,12 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 
+/// Embaralha um slice de índices in-place, útil para randomizar batches a cada época.
 pub fn shuffle(indices: &mut [usize]) {
     indices.shuffle(&mut rand::thread_rng());
 }
 
+/// Retorna o índice com o maior valor no array. Usado para extrair a classe final das probabilidades.
 pub fn argmax(v: &[f32]) -> usize {
     let mut max_idx = 0;
     for i in 1..v.len() {
@@ -20,6 +22,9 @@ pub fn argmax(v: &[f32]) -> usize {
     max_idx
 }
 
+/// Avalia o desempenho da rede num dataset completo de teste/validação.
+/// Utiliza a biblioteca `rayon` para paralelizar a avaliação em múltiplas threads.
+/// Retorna uma tupla contendo a taxa de acurácia (0.0 a 1.0) e o custo médio (Cross Entropy Loss).
 pub fn evaluate_batch(
     mlp: &MLP,
     images: &[f32],
@@ -760,6 +765,7 @@ pub fn plot_pca_embeddings(
     println!("✅ PCA Embeddings salvo em '{}'", output_path);
 }
 
+/// Rotaciona e translada a imagem no espaço 2D (Data Augmentation).
 pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: f32) {
     let angle_rad = angle_deg.to_radians();
     let cos_a = angle_rad.cos();
@@ -841,6 +847,7 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     }
 }
 
+/// Aplica deformação elástica localizada (Data Augmentation).
 pub fn elastic_distort(src: &[f32], dst: &mut [f32], alpha: f32, sigma: f32, rng: &mut StdRng) {
     let mut dx: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();
     let mut dy: Vec<f32> = (0..784).map(|_| rng.gen_range(-1.0f32..=1.0)).collect();

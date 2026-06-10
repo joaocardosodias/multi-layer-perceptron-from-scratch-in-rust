@@ -1,5 +1,8 @@
 use crate::network::{Gradients, MLP};
 
+/// Implementa a política de taxa de aprendizado '1cycle' (OneCycleLR).
+/// Varia a taxa de aprendizado de um valor inicial até um valor máximo (warmup),
+/// e então decai progressivamente (cosine annealing) ao longo das iterações.
 pub struct OneCycleLR {
     pub _total_steps: usize,
     pub warmup_steps: usize,
@@ -11,6 +14,7 @@ pub struct OneCycleLR {
 }
 
 impl OneCycleLR {
+    /// Cria um novo agendador OneCycleLR, usando 30% dos passos totais para aquecimento (warmup).
     pub fn new(total_steps: usize, max_lr: f32) -> Self {
         let warmup_steps = (total_steps as f32 * 0.3) as usize;
         let decay_steps = total_steps - warmup_steps;
@@ -25,6 +29,7 @@ impl OneCycleLR {
         }
     }
 
+    /// Calcula a taxa de aprendizado atual de acordo com o passo atual, utilizando a curva do cosseno.
     pub fn step(&mut self) -> f32 {
         let lr = if self.current_step < self.warmup_steps {
             let pct = self.current_step as f32 / self.warmup_steps as f32;
@@ -46,6 +51,8 @@ const BETA2: f32 = 0.999;
 const EPS: f32 = 1e-8;
 const WEIGHT_DECAY: f32 = 1e-4;
 
+/// Armazena o estado interno para o otimizador Adam (momentos de primeira e segunda ordem).
+/// `m` é a estimativa do momento e `v` é a estimativa da variância para pesos (`_w`) e vieses (`_b`).
 pub struct AdamState {
     pub m_w: Vec<f32>,
     pub v_w: Vec<f32>,
@@ -66,6 +73,8 @@ impl AdamState {
     }
 }
 
+/// Atualiza os parâmetros (pesos e vieses) da MLP usando o otimizador Adam com Weight Decay (Decaimento de Peso).
+/// Se a arquitetura alvo for `x86_64`, o cálculo é acelerado usando instruções vetorizadas SIMD (AVX256).
 pub fn adam_update(mlp: &mut MLP, grads: &Gradients, state: &mut AdamState, lr: f32) {
     state.t += 1;
     let bc1 = 1.0 - BETA1.powi(state.t as i32);

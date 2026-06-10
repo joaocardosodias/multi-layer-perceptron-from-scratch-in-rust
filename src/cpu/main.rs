@@ -16,15 +16,19 @@ use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use utils::*;
 
+/// Argumentos de linha de comando para o treinamento via CPU.
 #[derive(Parser)]
 #[command(name = "mlp-cpu", about = "MLP Trainer using CPU with BLAS")]
 struct Cli {
+    /// Número total de épocas de treinamento.
     #[arg(long, default_value_t = 300)]
     epochs: usize,
 
+    /// Tamanho do batch (lote) de imagens processado por iteração.
     #[arg(long, default_value_t = 256)]
     batch_size: usize,
 
+    /// Taxa de aprendizado base (Learning Rate) para o otimizador Adam.
     #[arg(long, default_value_t = 3e-3)]
     learning_rate: f32,
 
@@ -40,6 +44,8 @@ struct Cli {
     #[arg(long, default_value_t = 0.0)]
     label_smoothing: f32,
 
+    /// Arquitetura da rede (neurônios por camada), separados por vírgula.
+    /// Exemplo: "784,128,10" significa entrada=784, oculta=128, saída=10.
     #[arg(long)]
     arch: Option<String>,
 }
@@ -59,6 +65,9 @@ fn make_run_id(epochs: usize, batch_size: usize, lr: f32, arch: &str) -> String 
     format!("{:016x}", h.finish())
 }
 
+/// Ponto de entrada principal para a versão CPU.
+/// Configura o ambiente, carrega os dados MNIST, divide o processamento do treinamento
+/// em threads (Rayon) processando minibatches concorrentemente, e gera métricas e gráficos.
 fn main() {
     let args = Cli::parse();
 
@@ -82,7 +91,6 @@ fn main() {
         .map(|s| s.parse().expect("Arquitetura inválida"))
         .collect();
 
-    // ── Cria a pasta da run ──────────────────────────────────────────────────
     let run_id = make_run_id(args.epochs, args.batch_size, args.learning_rate, &arch_str);
     let run_dir = format!("runs/{}", run_id);
     std::fs::create_dir_all(&run_dir).expect("Não foi possível criar a pasta da run");
@@ -95,7 +103,6 @@ fn main() {
     println!("Arquitetura: {:?}", architecture);
     println!("Épocas: {} | Batch: {} | LR: {:.1e}", args.epochs, args.batch_size, args.learning_rate);
 
-    // Salva a configuração da run em JSON simples
     {
         use std::io::Write;
         let cfg_path = format!("{}/run_config.json", run_dir);

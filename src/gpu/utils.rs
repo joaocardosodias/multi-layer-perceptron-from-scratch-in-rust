@@ -8,6 +8,10 @@ use crate::linalg::BlasHandle;
 use crate::network::{BatchCache, MLP};
 use mlp::common::losses::cross_entropy;
 
+/// Avalia o desempenho do modelo no dataset de validação ou teste.
+/// O processo divide os dados em minibatches, envia para a VRAM (`htod_sync_copy`),
+/// roda o Forward Pass em modo inferência (sem dropout) e calcula acurácia e loss na CPU
+/// depois de trazer as ativações de volta (`dtoh_sync_copy`).
 pub fn evaluate_batch(
     mlp: &MLP,
     images: &[f32],
@@ -65,6 +69,7 @@ pub fn evaluate_batch(
     Ok((correct as f32 / n, total_loss / n))
 }
 
+/// Encontra a classe com maior probabilidade (índice de maior valor num slice).
 pub fn argmax(v: &[f32]) -> usize {
     let mut max_idx = 0;
     for i in 1..v.len() {
@@ -75,12 +80,14 @@ pub fn argmax(v: &[f32]) -> usize {
     max_idx
 }
 
+/// Embaralha o dataset (via índices) in-place para randomizar os batches de treinamento.
 pub fn shuffle(indices: &mut [usize]) {
     indices.shuffle(&mut rand::thread_rng());
 }
 
 use rand::Rng;
 
+/// Rotaciona e translada a imagem no espaço 2D na CPU (fallback/teste).
 pub fn augment_image(src: &[f32], dst: &mut [f32], angle_deg: f32, tx: f32, ty: f32) {
     let angle_rad = angle_deg.to_radians();
     let cos_a = angle_rad.cos();
@@ -155,6 +162,7 @@ fn gaussian_blur_2d(field: &mut [f32], sigma: f32) {
     }
 }
 
+/// Aplica deformação elástica localizada na imagem na CPU (fallback/teste).
 pub fn elastic_distort(
     src: &[f32],
     dst: &mut [f32],

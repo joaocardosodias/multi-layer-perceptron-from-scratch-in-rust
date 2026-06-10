@@ -6,6 +6,7 @@ use crate::kernels::Kernels;
 use crate::kernels::launch_adam_update;
 use crate::network::{Gradients, MLP};
 
+/// Mantém o estado interno do otimizador Adam (momentos e variâncias) alocado na GPU.
 pub struct AdamState {
     pub m_w: CudaSlice<f32>,
     pub v_w: CudaSlice<f32>,
@@ -15,6 +16,7 @@ pub struct AdamState {
 }
 
 impl AdamState {
+    /// Inicializa os tensores de estado do Adam com zeros na VRAM da placa de vídeo.
     pub fn new(dev: &Arc<CudaDevice>, mlp: &MLP) -> Result<Self, GpuError> {
         let m_w = dev.alloc_zeros::<f32>(mlp.weights.len())?;
         let v_w = dev.alloc_zeros::<f32>(mlp.weights.len())?;
@@ -35,6 +37,9 @@ const BETA2: f32 = 0.999;
 const EPS: f32 = 1e-8;
 const WEIGHT_DECAY: f32 = 1e-4;
 
+/// Executa a atualização dos pesos via otimizador Adam diretamente na GPU.
+/// Lança kernels CUDA (`adam_update`) separadamente para pesos (aplicando Weight Decay)
+/// e vieses (sem Weight Decay), garantindo máxima paralelização.
 pub fn adam_update(
     mlp: &mut MLP,
     grads: &mut Gradients,
@@ -80,6 +85,8 @@ pub fn adam_update(
     Ok(())
 }
 
+/// Implementa a política de taxa de aprendizado '1cycle' (OneCycleLR).
+/// Varia a taxa de aprendizado dinamicamente ao longo das épocas (cresce no início, depois decai).
 pub struct OneCycleLR {
     pub warmup_steps: usize,
     pub decay_steps: usize,
@@ -90,6 +97,7 @@ pub struct OneCycleLR {
 }
 
 impl OneCycleLR {
+    /// Cria o agendador OneCycleLR definindo 30% dos passos totais para aquecimento (warmup).
     pub fn new(total_steps: usize, max_lr: f32) -> Self {
         let warmup_steps = (total_steps as f32 * 0.3) as usize;
         let decay_steps = total_steps - warmup_steps;
@@ -103,6 +111,7 @@ impl OneCycleLR {
         }
     }
 
+    /// Avança o iterador e calcula a taxa de aprendizado atual (crescimento linear inicial, seguido de decaimento em cosseno).
     pub fn step(&mut self) -> f32 {
         let lr = if self.current_step < self.warmup_steps {
             let pct = self.current_step as f32 / self.warmup_steps as f32;

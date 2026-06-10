@@ -1,7 +1,11 @@
+/// Aplica a função de ativação ReLU (Rectified Linear Unit) a um vetor de entrada.
+/// Retorna um novo vetor onde todos os valores negativos são substituídos por 0.
 pub fn relu_forward(z: &[f32]) -> Vec<f32> {
     z.iter().map(|&v| if v > 0.0 { v } else { 0.0 }).collect()
 }
 
+/// Calcula o gradiente (backward pass) da função ReLU.
+/// Recebe os valores da camada atual `z` e os gradientes da camada seguinte `delta`.
 pub fn relu_backward(z: &[f32], delta: &[f32]) -> Vec<f32> {
     z.iter()
         .zip(delta.iter())
@@ -9,6 +13,8 @@ pub fn relu_backward(z: &[f32], delta: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// Aplica a função Softmax a um vetor de valores (logits).
+/// Converte as pontuações brutas em uma distribuição de probabilidade (valores entre 0 e 1 que somam 1).
 pub fn softmax_forward(z: &[f32]) -> Vec<f32> {
     let max_z = z.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let exp_z: Vec<f32> = z.iter().map(|&v| (v - max_z).exp()).collect();
@@ -16,10 +22,14 @@ pub fn softmax_forward(z: &[f32]) -> Vec<f32> {
     exp_z.iter().map(|&v| v / sum_exp).collect()
 }
 
+/// Calcula a função de perda entropia cruzada (Cross-Entropy Loss).
+/// Recebe as `probs` (probabilidades preditas pelo Softmax) e o `target` (índice da classe real).
 pub fn cross_entropy_loss(probs: &[f32], target: usize) -> f32 {
     -probs[target].max(1e-15).ln()
 }
 
+/// Calcula o gradiente combinado da função Softmax e da perda de Entropia Cruzada.
+/// É uma operação simplificada e numericamente mais estável do que calculá-las separadamente.
 pub fn softmax_crossentropy_backward(probs: &[f32], target: usize) -> Vec<f32> {
     let mut delta = probs.to_vec();
     delta[target] -= 1.0;

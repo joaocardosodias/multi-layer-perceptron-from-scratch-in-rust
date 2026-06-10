@@ -1,6 +1,9 @@
 use std::fs::File;
 use std::io::Read;
 
+/// Lê um arquivo de imagens no formato IDX (comum no MNIST).
+/// Retorna uma tupla contendo um vetor unidimensional com todos os pixels de todas as imagens (normalizados entre 0.0 e 1.0)
+/// e o número total de imagens lidas.
 pub fn load_images(path: &str) -> (Vec<f32>, usize) {
     let mut file = File::open(path).expect("Failed to open images");
     let mut buf = Vec::new();
@@ -20,6 +23,8 @@ pub fn load_images(path: &str) -> (Vec<f32>, usize) {
     }
     (images, num_imagens)
 }
+/// Lê um arquivo de rótulos (labels) no formato IDX.
+/// Retorna um vetor contendo a classe (0-9) correspondente a cada imagem.
 pub fn load_labels(path: &str) -> Vec<usize> {
     let mut file = File::open(path).expect("Failed to open labels");
     let mut buf = Vec::new();

@@ -1,3 +1,5 @@
+/// Enum que consolida os diferentes tipos de erro que podem ocorrer na GPU.
+/// Encapsula erros de driver CUDA, cuBLAS, compilação JIT (NVRTC) ou erros customizados.
 #[derive(Debug)]
 pub enum GpuError {
     Driver(cudarc::driver::DriverError),

@@ -8,6 +8,8 @@ use crate::error::GpuError;
 use crate::kernels::*;
 use crate::linalg::BlasHandle;
 
+/// Estrutura principal da rede neural Multi-Layer Perceptron na GPU.
+/// Armazena os pesos e vieses diretamente na memória do dispositivo (VRAM) via `CudaSlice`.
 #[allow(dead_code)]
 pub struct MLP {
     pub weights: CudaSlice<f32>,
@@ -18,6 +20,9 @@ pub struct MLP {
     pub dev: Arc<CudaDevice>,
 }
 
+/// Cache de tensores intermediários pré-alocados na GPU para processamento de batches.
+/// Mantém pre-ativações (Z), ativações (A) e erros propagados (deltas) na VRAM,
+/// evitando overhead de alocação dinâmica durante o loop de treinamento rápido.
 pub struct BatchCache {
     pub pre_activations: CudaSlice<f32>,
     pub p_offsets: Vec<usize>,
@@ -27,6 +32,7 @@ pub struct BatchCache {
 }
 
 impl BatchCache {
+    /// Pre-aloca a memória necessária na GPU com base na arquitetura da rede e tamanho do batch.
     pub fn new(
         dev: &Arc<CudaDevice>,
         dims: &[(usize, usize)],
@@ -66,6 +72,7 @@ impl BatchCache {
     }
 }
 
+/// Mantém os tensores de gradientes acumulados para pesos e vieses alocados na GPU.
 pub struct Gradients {
     pub dw: CudaSlice<f32>,
     pub w_offsets: Vec<usize>,
@@ -75,6 +82,7 @@ pub struct Gradients {
 }
 
 impl Gradients {
+    /// Instancia a estrutura alocando tensores zerados (`alloc_zeros`) na VRAM.
     pub fn new(dev: &Arc<CudaDevice>, mlp: &MLP) -> Result<Self, GpuError> {
         let dw = dev.alloc_zeros::<f32>(mlp.weights.len())?;
         let db = dev.alloc_zeros::<f32>(mlp.biases.len())?;
@@ -87,6 +95,7 @@ impl Gradients {
         })
     }
 
+    /// Preenche rapidamente a memória dos tensores de gradiente com zeros na GPU.
     pub fn zero(&mut self) -> Result<(), GpuError> {
         self.dev.memset_zeros(&mut self.dw)?;
         self.dev.memset_zeros(&mut self.db)?;
@@ -95,6 +104,8 @@ impl Gradients {
 }
 
 impl MLP {
+    /// Constrói a MLP, inicializando os pesos na RAM do host usando distribuição Normal
+    /// e em seguida realizando a cópia (Host-to-Device) para a VRAM da placa de vídeo.
     pub fn new(dev: &Arc<CudaDevice>, architecture: &[usize]) -> Result<Self, GpuError> {
         let mut weights = Vec::new();
         let mut w_offsets = Vec::new();
@@ -138,6 +149,9 @@ impl MLP {
         })
     }
 
+    /// Processa o Forward Pass de um batch puramente na GPU.
+    /// Combina operações super otimizadas da NVIDIA (cuBLAS `gemm_tb`) com kernels CUDA customizados
+    /// para adição de bias (`bias_add`), ativações (`relu`, `softmax`) e regularização (`dropout`).
     pub fn forward_batch(
         &self,
         input: &cudarc::driver::CudaView<f32>,
@@ -206,6 +220,10 @@ impl MLP {
         Ok(())
     }
 
+    /// Processa o Backward Pass de um batch na GPU para computar os gradientes locais.
+    /// Lança um kernel unificado para o erro cruzado da Softmax (`softmax_crossentropy_backward`), 
+    /// extrai gradientes matriciais via cuBLAS (`gemm_ta`, `gemm`),
+    /// e propaga pela ReLU reversa e acumulação vetorial de linhas de erro.
     pub fn backward_batch(
         &self,
         cache: &mut BatchCache,
