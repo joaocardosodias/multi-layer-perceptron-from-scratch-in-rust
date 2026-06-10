@@ -15,14 +15,33 @@ path = "src/cpu/main.rs"
 name = "mlp-gpu"
 path = "src/gpu/main.rs"
 
+[[bin]]
+name = "plot"
+path = "src/bin/plot.rs"
+required-features = ["auto-plot"]
+
 [dependencies]
 rayon = "1.10"
 rand = "0.8"
 rand_distr = "0.4"
 cblas-sys = "0.3.0"
-intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"] }
 fastrand = "2"
-cudarc = { version = "0.11", features = ["cublas", "cuda-12020"] }
+cudarc = { version = "0.11", features = ["cublas", "cuda-12020"], optional = true }
+plotters = { version = "0.3", optional = true }
+csv = { version = "1.3", optional = true }
+
+# BLAS backends (escolha um via feature flag)
+intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"], optional = true }
+openblas-src = { version = "0.10", features = ["cblas", "system"], optional = true }
+accelerate-src = { version = "0.3", optional = true }
+
+[features]
+default = ["mkl", "gpu"]
+mkl = ["intel-mkl-src"]
+openblas = ["openblas-src"]
+accelerate = ["accelerate-src"]
+gpu = ["cudarc"]
+auto-plot = ["plotters", "csv"]
 
 [profile.release]
 opt-level = 3

@@ -4,9 +4,77 @@
 
 ---
 
-## Como rodar
 
-### 1. Instalar Rust
+
+### Organização do repositório
+
+```
+src/
+├── common/          # Código compartilhado (data loader, losses, augmentation)
+│   ├── data.rs
+│   ├── losses.rs
+│   ├── augment.rs
+│   └── mod.rs
+├── cpu/             # Versão CPU (MKL / OpenBLAS / Accelerate)
+│   ├── main.rs      # Entry point CPU
+│   ├── network.rs   # MLP com BLAS
+│   ├── optimizers.rs
+│   └── utils.rs
+├── gpu/             # Versão GPU (NVIDIA CUDA)
+│   ├── main.rs      # Entry point GPU
+│   ├── network.rs   # MLP com cuBLAS
+│   ├── kernels.rs   # Kernels CUDA customizados
+│   ├── optimizers.rs
+│   ├── linalg.rs
+│   └── utils.rs
+├── bin/
+│   └── plot.rs      # Gerador de gráficos de comparação (100% Rust)
+├── experiments/
+│   ├── run_comparison.sh  # Script para rodar experimentos comparativos
+│   └── output/            # Resultados dos experimentos (CSVs e gráficos)
+└── lib.rs           # Biblioteca compartilhada
+```
+
+### Experimentos e Comparação
+
+Para comparar diferentes configurações (arquiteturas, learning rates, etc):
+
+```bash
+# Rodar script de comparação automática
+chmod +x experiments/run_comparison.sh
+./experiments/run_comparison.sh
+
+# Ou manualmente (com gráfico automático):
+ARCH="784,2048,1024,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+mv training_log.csv experiments/output/run1.csv
+mv training_plot.png experiments/output/run1_plot.png
+
+ARCH="784,128,64,10" cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+mv training_log.csv experiments/output/run2.csv
+mv training_plot.png experiments/output/run2_plot.png
+
+# Gerar gráfico de comparação entre runs
+cargo run --bin plot --features auto-plot -- experiments/output/run1.csv "Rede Grande" experiments/output/run2.csv "Rede Pequena"
+```
+
+O gráfico será salvo em `experiments/output/comparison_plot.png`.
+
+| Backend | Plataforma | Comando |
+|:---|:---|:---|
+| **Intel MKL** | Linux / Windows | `cargo run --bin mlp-cpu --release --features mkl` |
+| **OpenBLAS** | Linux / Windows / macOS | `cargo run --bin mlp-cpu --release --features openblas` |
+| **Accelerate** | Apple Silicon (macOS) | `cargo run --bin mlp-cpu --release --features accelerate` |
+| **CUDA** | NVIDIA GPU | `cargo run --bin mlp-gpu --release --features gpu` |
+
+### Gerar gráfico automaticamente
+
+Para gerar o gráfico de loss e acurácia ao final do treino, adicione a feature `auto-plot`:
+
+```bash
+cargo run --bin mlp-cpu --release --features "mkl,auto-plot"
+```
+
+Isso vai salvar `training_plot.png` com os gráficos de acurácia e loss ao longo das épocas.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -21,8 +89,9 @@ cargo --version
 
 ### 2. Instalar dependências
 
-#### CPU (Intel MKL)
+#### CPU (BLAS - escolha um)
 
+**Intel MKL (padrão):**
 ```bash
 # Arch Linux
 sudo pacman -S intel-oneapi-mkl
@@ -33,7 +102,26 @@ sudo apt install intel-mkl
 # Windows
 # Baixe o Intel oneAPI Base Toolkit em:
 # https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html
-# Durante a instalação, marque apenas a opção "Intel MKL"
+```
+
+**OpenBLAS (AMD / Genérico):**
+```bash
+# Arch Linux
+sudo pacman -S openblas
+
+# Ubuntu/Debian
+sudo apt install libopenblas-dev
+
+# macOS
+brew install openblas
+
+# Windows
+# Baixe em: https://github.com/OpenMathLib/OpenBLAS/releases
+```
+
+**Accelerate (Apple Silicon - nativo):**
+```bash
+# Já incluído no macOS, não precisa instalar nada
 ```
 
 #### GPU (NVIDIA CUDA)
@@ -109,23 +197,26 @@ python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('t10k-labels-idx1-u
 
 ### 4. Compilar e rodar
 
-#### Versão CPU (Intel MKL)
+#### Versão CPU (BLAS)
 
-**Linux/macOS:**
+**Intel (MKL):**
 ```bash
-cargo run --bin mlp-cpu --release
+cargo run --bin mlp-cpu --release --features mkl
 ```
 
-**Windows (PowerShell):**
-```powershell
-# Configurar variáveis de ambiente do Intel MKL
-# (ajuste o caminho conforme sua instalação)
-$env:MKLROOT = "C:\Program Files (x86)\Intel\oneAPI\mkl\latest"
-$env:LIB = "$env:MKLROOT\lib\intel64;$env:LIB"
-$env:INCLUDE = "$env:MKLROOT\include;$env:INCLUDE"
+**AMD / Genérico (OpenBLAS):**
+```bash
+# Instalar OpenBLAS primeiro:
+# Arch: sudo pacman -S openblas
+# Ubuntu: sudo apt install libopenblas-dev
+# macOS: brew install openblas
 
-# Compilar e rodar
-cargo run --bin mlp-cpu --release
+cargo run --bin mlp-cpu --release --features openblas
+```
+
+**Apple Silicon (Accelerate):**
+```bash
+cargo run --bin mlp-cpu --release --features accelerate
 ```
 
 #### Versão GPU (NVIDIA CUDA)
@@ -151,7 +242,13 @@ nvidia-smi
 cargo run --bin mlp-gpu --release
 ```
 
-> _(Hardware: Dell Latitude, Arch Linux, Intel Core i5-1345u, 16GB RAM, sem GPU)_
+### Portabilidade CPU
+
+> **Nota:** Este projeto foi originalmente desenvolvido e otimizado especificamente para **Intel MKL**. Posteriormente, adicionei suporte a **OpenBLAS** (para CPUs AMD e Intel genéricas) e **Accelerate** (para Apple Silicon).
+>
+> **Testado em:** Intel MKL e OpenBLAS (funcionam perfeitamente no meu PC com Intel Core i5-1345u).
+>
+> **Não testado:** Apple Accelerate (não tenho um Mac para testar, mas a implementação segue a API padrão do cblas-sys e deve funcionar).
 
 ---
 

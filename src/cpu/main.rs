@@ -31,10 +31,18 @@ fn main() {
         num_train, num_test, num_threads
     );
 
-    let mut mlp = MLP::new(&[784, 2048, 1024, 10]);
+    // Ler arquitetura da variável de ambiente ou usar padrão
+    let arch_str = std::env::var("ARCH").unwrap_or("784,2048,1024,10".to_string());
+    let architecture: Vec<usize> = arch_str
+        .split(',')
+        .map(|s| s.parse().expect("Arquitetura inválida"))
+        .collect();
+    println!("Arquitetura: {:?}", architecture);
+
+    let mut mlp = MLP::new(&architecture);
 
     let batch_size = 256;
-    let epochs = 300;
+    let epochs = 10;
 
     let mut adam = AdamState::new(&mlp);
     let mut acc_grads = Gradients::new(&mlp);
@@ -174,6 +182,32 @@ fn main() {
             eval_time.as_secs_f64()
         );
 
+        // Salvar no CSV para experimentos
+        let train_loss = epoch_loss / total as f32;
+        let train_acc = 100.0 * correct as f32 / total as f32;
+        
+        use std::fs::File;
+        use std::io::Write;
+        
+        // Cria ou sobrescreve o arquivo no início do treino
+        if epoch == 0 {
+            if let Ok(mut file) = File::create("training_log.csv") {
+                let _ = writeln!(file, "epoch,train_loss,train_acc,test_acc,test_loss");
+            }
+        }
+        
+        if let Ok(mut file) = File::options().append(true).open("training_log.csv") {
+            let _ = writeln!(
+                file, 
+                "{},{:.6},{:.2},{:.2},{:.6}", 
+                epoch + 1, 
+                train_loss, 
+                train_acc, 
+                test_acc * 100.0, 
+                test_loss
+            );
+        }
+
         if test_acc > best_test_acc {
             best_test_acc = test_acc;
             best_epoch = epoch + 1;
@@ -189,4 +223,137 @@ fn main() {
         best_test_acc * 100.0,
         best_epoch
     );
+
+    #[cfg(feature = "auto-plot")]
+    {
+        use plotters::prelude::*;
+        use std::fs::File;
+        use std::io::BufReader;
+
+        println!("\n📊 Gerando gráfico de treinamento...");
+
+        // Ler dados do CSV
+        let mut epochs = vec![];
+        let mut train_losses = vec![];
+        let mut train_accs = vec![];
+        let mut test_accs = vec![];
+        let mut test_losses = vec![];
+
+        if let Ok(file) = File::open("training_log.csv") {
+            let mut reader = csv::Reader::from_reader(BufReader::new(file));
+            for result in reader.records() {
+                if let Ok(record) = result {
+                    if let (Ok(e), Ok(tl), Ok(ta), Ok(te), Ok(tel)) = (
+                        record[0].parse::<u32>(),
+                        record[1].parse::<f32>(),
+                        record[2].parse::<f32>(),
+                        record[3].parse::<f32>(),
+                        record[4].parse::<f32>(),
+                    ) {
+                        epochs.push(e);
+                        train_losses.push(tl);
+                        train_accs.push(ta);
+                        test_accs.push(te);
+                        test_losses.push(tel);
+                    }
+                }
+            }
+        }
+
+        if !epochs.is_empty() {
+            let output_path = "training_plot.png";
+            let root = BitMapBackend::new(output_path, (1200, 500)).into_drawing_area();
+            let white = WHITE;
+            root.fill(&white).unwrap();
+
+            let (left, right) = root.split_horizontally(600);
+
+            // Gráfico de Acurácia
+            let max_epoch = *epochs.iter().max().unwrap_or(&300) + 10;
+            let mut acc_chart = ChartBuilder::on(&left)
+                .caption("Acurácia ao longo do Treinamento", ("sans-serif", 30))
+                .margin(10)
+                .x_label_area_size(50)
+                .y_label_area_size(60)
+                .build_cartesian_2d(0u32..max_epoch, 90.0f32..100.0f32)
+                .unwrap();
+
+            acc_chart
+                .configure_mesh()
+                .x_label_style(("sans-serif", 20))
+                .y_label_style(("sans-serif", 20))
+                .draw()
+                .unwrap();
+
+            acc_chart
+                .draw_series(LineSeries::new(
+                    epochs.iter().zip(train_accs.iter()).map(|(&x, &y)| (x, y)),
+                    BLUE,
+                ))
+                .unwrap()
+                .label("Treino")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+
+            acc_chart
+                .draw_series(LineSeries::new(
+                    epochs.iter().zip(test_accs.iter()).map(|(&x, &y)| (x, y)),
+                    RED,
+                ))
+                .unwrap()
+                .label("Teste")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+
+            acc_chart
+                .configure_series_labels()
+                .position(SeriesLabelPosition::UpperLeft)
+                .label_font(("sans-serif", 20))
+                .draw()
+                .unwrap();
+
+            // Gráfico de Loss
+            let max_loss = train_losses.iter().chain(test_losses.iter()).cloned().fold(0.0f32, f32::max) * 1.2;
+            let mut loss_chart = ChartBuilder::on(&right)
+                .caption("Loss ao longo do Treinamento", ("sans-serif", 30))
+                .margin(10)
+                .x_label_area_size(50)
+                .y_label_area_size(60)
+                .build_cartesian_2d(0u32..max_epoch, 0.0f32..max_loss)
+                .unwrap();
+
+            loss_chart
+                .configure_mesh()
+                .x_label_style(("sans-serif", 20))
+                .y_label_style(("sans-serif", 20))
+                .draw()
+                .unwrap();
+
+            loss_chart
+                .draw_series(LineSeries::new(
+                    epochs.iter().zip(train_losses.iter()).map(|(&x, &y)| (x, y)),
+                    BLUE,
+                ))
+                .unwrap()
+                .label("Treino")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+
+            loss_chart
+                .draw_series(LineSeries::new(
+                    epochs.iter().zip(test_losses.iter()).map(|(&x, &y)| (x, y)),
+                    RED,
+                ))
+                .unwrap()
+                .label("Teste")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+
+            loss_chart
+                .configure_series_labels()
+                .position(SeriesLabelPosition::UpperRight)
+                .label_font(("sans-serif", 20))
+                .draw()
+                .unwrap();
+
+            root.present().unwrap();
+            println!("✅ Gráfico salvo em '{}'", output_path);
+        }
+    }
 }
